@@ -320,3 +320,67 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
   return (from_train_ids_path, to_train_ids_path,
           from_dev_ids_path, to_dev_ids_path,
           from_vocab_path, to_vocab_path)
+
+def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, report_frequency=200000):
+  """Read data from source and target files and put into buckets.
+
+  Args:
+    source_path: path to the files with integer-like token-ids for the source language.
+                 integer-like means they are still strings, obviously, but after being
+                 processed through the integerizer
+    target_path: path to the file with integer-like token-ids for the target language.
+      it must be aligned with the source file: n-th line contains the desired
+      output for n-th line from the source_path.
+    buckets - list of tuples (source max length, target max length) for
+            - various sentence length buckets with which to append the data.
+    max_size: maximum number of lines to read, all other will be ignored;
+        if 0 or None, all lines will be read.
+    report_frequency: integer to specify to console how often to report progress in processing file
+
+  Returns:
+    data_set: a list of length len(buckets); 
+      data_set[n] contains a list of
+      (source, target) pairs read from the provided data files that fit
+      into the n-th bucket, i.e., such that len(source) < buckets[n][0] and
+      len(target) < buckets[n][1];
+      source and target are integer lists of token-ids.
+  """
+
+  data_set = [ [] for _ in buckets]
+
+  with tf.gfile.GFile(source_path, mode="r") as source_file:
+    with tf.gfile.GFile(target_path, mode="r") as target_file:
+      counter = 0
+      source = source_file.readline() 
+      target = target_file.readline()
+
+      while source and target:
+
+        counter += 1
+
+        if counter % report_frequency == 0:
+          print("reading data line %d" % counter)
+
+        #What we read is not quite an integer yet, so convert the string representations to actual integers.
+        source_ids = [ int(x) for x in source.split()]
+        target_ids = [ int(x) for x in target.split()]
+
+        #We always add the end of sentence to the target sentence and do it here so that it doesn't
+        #go above the max bucket size ever. 
+        target_ids.append(EOS_ID)
+
+        #Add to appropriate bucket based upon the sentence length
+        #If the sentence goes over the bucket length, it doesnt go in
+        for bucket_id, (source_size, target_size) in enumerate(buckets):
+          if len(source_ids) < source_size and len(target_ids) < target_size:
+            data_set[bucket_id].append([source_ids, target_ids])
+            break
+
+        if max_size and counter >= max_size:
+          break
+
+        #Prepare next loop iteration
+        source = source_file.readline()
+        target = target_file.readline()
+
+  return data_set

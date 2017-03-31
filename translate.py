@@ -51,45 +51,9 @@ FLAGS = tf.app.flags.FLAGS
 # We use a number of buckets and pad to the closest one for efficiency.
 # See seq2seq_model.Seq2SeqModel for details of how they work.
 #_buckets2 = [(5, 10), (10, 15), (20, 25), (40, 50)]
-_buckets = [(10,15), (25,35)]
 
-def read_data(source_path, target_path, max_size=None):
-  """Read data from source and target files and put into buckets.
-
-  Args:
-    source_path: path to the files with token-ids for the source language.
-    target_path: path to the file with token-ids for the target language;
-      it must be aligned with the source file: n-th line contains the desired
-      output for n-th line from the source_path.
-    max_size: maximum number of lines to read, all other will be ignored;
-      if 0 or None, data files will be read completely (no limit).
-
-  Returns:
-    data_set: a list of length len(_buckets); data_set[n] contains a list of
-      (source, target) pairs read from the provided data files that fit
-      into the n-th bucket, i.e., such that len(source) < _buckets[n][0] and
-      len(target) < _buckets[n][1]; source and target are lists of token-ids.
-  """
-  data_set = [[] for _ in _buckets]
-  with tf.gfile.GFile(source_path, mode="r") as source_file:
-    with tf.gfile.GFile(target_path, mode="r") as target_file:
-      source, target = source_file.readline(), target_file.readline()
-      counter = 0
-      while source and target and (not max_size or counter < max_size):
-        counter += 1
-        if counter % 100000 == 0:
-          print("  reading data line %d" % counter)
-          sys.stdout.flush()
-        source_ids = [int(x) for x in source.split()]
-        target_ids = [int(x) for x in target.split()]
-        target_ids.append(data_utils.EOS_ID)
-        for bucket_id, (source_size, target_size) in enumerate(_buckets):
-          if len(source_ids) < source_size and len(target_ids) < target_size:
-            data_set[bucket_id].append([source_ids, target_ids])
-            break
-        source, target = source_file.readline(), target_file.readline()
-  return data_set
-
+#THESE WILL NEED TO CHANGE
+_buckets = [(8,12), (16, 24), (24,40)]
 
 def create_model(session, forward_only):
   """Create translation model and initialize or load parameters in session."""
@@ -145,15 +109,32 @@ def train():
   with tf.Session() as sess:
     # Create model.
     print("Session initialized. Creating Model...")
+
+    if FLAGS.load_train_set_in_memory:
+      print("Training set will be loaded into memory")
+    else:
+      print("Training set batches will be dynamically placed into buckets at each training step by reading from file")
+
     model = create_model(sess, False)
 
     # Read data into buckets and compute their sizes.
     print ("Reading development and training data (limit: %d)."
            % FLAGS.max_train_data_size)
-    dev_set = read_data(from_dev, to_dev)
-    train_set = read_data(from_train, to_train, FLAGS.max_train_data_size)
+
+    #Load the validation set in memory always, because its relatively small
+    dev_set = data_utils.load_dataset_in_memory(from_dev, to_dev, _buckets)
+
+    #The training set will be loaded into memory only if the user specifies in a flag, because
+    #with large numbers of buckets, big models, or huge datasets, you can run out of memory easily
+    if FLAGS.load_train_set_in_memory:
+      train_set = data_utils.load_dataset_in_memory(from_train, to_train, _buckets, max_size=FLAGS.max_train_data_size)
+    else:
+      raise NotImplementedError("Rob, write this method")
+
     train_bucket_sizes = [len(train_set[b]) for b in xrange(len(_buckets))]
     train_total_size = float(sum(train_bucket_sizes))
+
+    print(train_total_size)
 
     # A bucket scale is a list of increasing numbers from 0 to 1 that we'll use
     # to select a bucket. Length of [scale[i], scale[i+1]] is proportional to
@@ -161,10 +142,13 @@ def train():
     train_buckets_scale = [sum(train_bucket_sizes[:i + 1]) / train_total_size
                            for i in xrange(len(train_bucket_sizes))]
 
+    print(train_buckets_scale)
+
     # This is the training loop.
     step_time, loss = 0.0, 0.0
     current_step = 0
     previous_losses = []
+
     while True:
       # Choose a bucket according to data distribution. We pick a random number
       # in [0, 1] and use the corresponding interval in train_buckets_scale.
@@ -175,7 +159,7 @@ def train():
       # Get a batch and make a step.
       start_time = time.time()
       encoder_inputs, decoder_inputs, target_weights = model.get_batch(
-          train_set, bucket_id)
+          train_set, bucket_id, load_from_memory=FLAGS.load_train_set_in_memory)
       _, step_loss, _ = model.step(sess, encoder_inputs, decoder_inputs,
                                    target_weights, bucket_id, False)
       step_time += (time.time() - start_time) / FLAGS.steps_per_checkpoint
@@ -213,7 +197,7 @@ def train():
             print("  eval on validation set: empty bucket %d" % (bucket_id))
             continue
           encoder_inputs, decoder_inputs, target_weights = model.get_batch(
-              dev_set, bucket_id)
+              dev_set, bucket_id, load_from_memory=True)
           _, eval_loss, _ = model.step(sess, encoder_inputs, decoder_inputs,
                                        target_weights, bucket_id, True)
           eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float(
@@ -254,7 +238,7 @@ def decode():
 
       # Get a 1-element batch to feed the sentence to the model.
       encoder_inputs, decoder_inputs, target_weights = model.get_batch(
-          {bucket_id: [(token_ids, [])]}, bucket_id)
+          {bucket_id: [(token_ids, [])]}, bucket_id, load_from_memory=True)
       # Get output logits for the sentence.
       _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
                                        target_weights, bucket_id, True)
@@ -285,6 +269,6 @@ def self_test():
     for _ in xrange(5):  # Train the fake model for 5 steps.
       bucket_id = random.choice([0, 1])
       encoder_inputs, decoder_inputs, target_weights = model.get_batch(
-          data_set, bucket_id)
+          data_set, bucket_id, load_from_memory=True)
       model.step(sess, encoder_inputs, decoder_inputs, target_weights,
                  bucket_id, False)

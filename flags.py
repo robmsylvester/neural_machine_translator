@@ -1,32 +1,55 @@
 import tensorflow as tf
 
 tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
+
 tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
                           "Learning rate decays by this much.")
+
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
+
 tf.app.flags.DEFINE_integer("batch_size", 16,
                             "Batch size to use during training.")
+
 tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "English vocabulary size.")
+
 tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "French vocabulary size.")
+
 tf.app.flags.DEFINE_string("data_dir", "/home/rob/WMT", "Data directory")
+
 tf.app.flags.DEFINE_string("train_dir", "/home/rob/WMT", "Training directory.")
+
 tf.app.flags.DEFINE_string("from_train_data", None, "Training data.")
+
 tf.app.flags.DEFINE_string("to_train_data", None, "Training data.")
+
 tf.app.flags.DEFINE_string("from_dev_data", None, "Validation data.")
+
 tf.app.flags.DEFINE_string("to_dev_data", None, "Validation data.")
-tf.app.flags.DEFINE_integer("max_train_data_size", 100000,
-                            "Limit on the size of training data (0: no limit).")
+
 tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300,
                             "How many training steps to do per checkpoint.")
+
 tf.app.flags.DEFINE_integer("loss_increases_per_decay", 2,
                             "The learning rate will decay if the loss is greater than the max of the last (this many) checkpoint losses.")
+
 tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
+
 tf.app.flags.DEFINE_boolean("self_test", False,
                             "Run a self-test if this is set to True.")
+
 tf.app.flags.DEFINE_boolean("use_fp16", False,
                             "Train using fp16 instead of fp32.")
+
+
+
+#Dataset Flags
+tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
+                            "If True, loads training set into memory. Otherwise, reads batches by opening files and reading appropriate lines.")
+
+tf.app.flags.DEFINE_integer("max_train_data_size", 400000,
+                            "Limit on the size of training data (0: no limit).")
 
 
 

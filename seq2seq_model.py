@@ -24,7 +24,6 @@ import random
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
-import Recurrent_Stack
 import custom_contrib_seq2seq
 import data_utils
 
@@ -250,7 +249,7 @@ class Seq2SeqModel(object):
     else:
       return None, outputs[0], outputs[1:]  # No gradient norm, loss, outputs.
 
-  def get_batch(self, data, bucket_id):
+  def get_batch(self, data, bucket_id, load_from_memory=True, source_path=None, target_path=None, max_size=None):
     """Get a random batch of data from the specified bucket, prepare for step.
 
     To feed data in step(..) it must be a list of batch-major vectors, while
@@ -261,11 +260,45 @@ class Seq2SeqModel(object):
       data: a tuple of size len(self.buckets) in which each element contains
         lists of pairs of input and output data that we use to create a batch.
       bucket_id: integer, which bucket to get the batch for.
+      load_from_memory : boolean - if true, loads the dataset from memory by
+        directly examining the buckets and randomly choosing from them. if false,
+        will randomly choose lines fitting the sizing parameters of the bucket_id
+        that was passed. notice that this will be slower.
+
+      #TODO - finish implementing getting a batch from not the file
 
     Returns:
       The triple (encoder_inputs, decoder_inputs, target_weights) for
       the constructed batch that has the proper format to call step(...) later.
     """
+
+    if load_from_memory:
+      return self.get_batch_from_memory(data, bucket_id)
+    else:
+      return self.get_batch_from_file(data, bucket_id, source_path, target_path, max_size)
+
+
+  def get_batch_from_memory(self, data, bucket_id):
+    """Get a random batch of data from the specified bucket, prepare for step.
+
+    To feed data in step(..) it must be a list of batch-major vectors, while
+    data here contains single length-major cases. So the main logic of this
+    function is to re-index data cases to be in the proper format for feeding.
+
+    Args:
+      data: a tuple of size len(self.buckets) in which each element contains
+        lists of pairs of input and output data that we use to create a batch.
+      bucket_id: integer, which bucket to get the batch for.
+      load_from_memory : boolean - if true, loads the dataset from memory by
+        directly examining the buckets and randomly choosing from them. if false,
+        will randomly choose lines fitting the sizing parameters of the bucket_id
+        that was passed. notice that this will be slower.
+
+    Returns:
+      The triple (encoder_inputs, decoder_inputs, target_weights) for
+      the constructed batch that has the proper format to call step(...) later.
+    """
+
     encoder_size, decoder_size = self.buckets[bucket_id]
     encoder_inputs, decoder_inputs = [], []
 
@@ -309,3 +342,7 @@ class Seq2SeqModel(object):
           batch_weight[batch_idx] = 0.0
       batch_weights.append(batch_weight)
     return batch_encoder_inputs, batch_decoder_inputs, batch_weights
+
+
+  def get_batch_from_file(self, data, bucket_id, source_path, target_path, max_size):
+    raise NotImplementedError
