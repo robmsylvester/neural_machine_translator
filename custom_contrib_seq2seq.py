@@ -85,7 +85,6 @@ linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
 
 FLAGS = tf.app.flags.FLAGS
 
-
 def _create_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_keep_prob):
   c = core_rnn_cell_impl.LSTMCell(hidden_size, #number of units in the LSTM
                 use_peepholes=use_peepholes,
@@ -94,6 +93,22 @@ def _create_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_keep_prob
   if dropout_keep_prob < 1.0:
     c = core_rnn_cell_impl.DropoutWrapper(c, output_keep_prob=dropout_keep_prob)
   return c
+
+
+def _create_output_projection(target_size,
+                              output_size):
+
+  #NOTE, shape[1] of the output projection weights should be equal to the output size of the final decoder layer
+  #If, for some reason, I make the final output layer bidirectional or something else strange, this would be the
+  #wrong size for the output
+
+  #Notice we don't put this in a scope. It lives in the sequence model itself and gets passed between layers of the
+  #encoder and decoder.
+  weights_t = tf.get_variable("output_projection_weights", [target_size, output_size], dtype=tf.float32)
+  weights = tf.transpose(weights_t)
+  biases = tf.get_variable("output_projection_biases", [target_size], dtype=tf.float32)
+  return (weights, biases, weights_t)
+  
 
 
 def _extract_argmax_and_embed(embedding,
@@ -409,6 +424,11 @@ def embedding_attention_decoder(decoder_inputs,
   """
   #if output_size is None:
   #  output_size = cell.output_size
+
+  #print(type(output_projection[0]))
+  #print(type(output_projection[1]))
+  #print("var scope of w_t from custom contrib is " + str(output_projection[0].get_variable_scope().name))
+
   if output_projection is not None:
     proj_biases = ops.convert_to_tensor(output_projection[1], dtype=dtype)
     proj_biases.get_shape().assert_is_compatible_with([num_symbols])
@@ -432,8 +452,6 @@ def embedding_attention_decoder(decoder_inputs,
         num_heads=num_heads,
         loop_function=loop_function,
         initial_state_attention=initial_state_attention)
-
-
 
 
 def run_encoder(encoder_inputs,
@@ -571,79 +589,6 @@ def run_model(encoder_inputs,
           initial_state_attention=initial_state_attention)
 
 
-#TODO - delete this function
-def embedding_attention_seq2seq(attention_states,
-                                encoder_state,
-                                decoder_inputs,
-                                num_encoder_symbols,
-                                num_decoder_symbols,
-                                embedding_size,
-                                num_heads=1,
-                                output_projection=None,
-                                feed_previous=False,
-                                dtype=None,
-                                scope=None,
-                                initial_state_attention=False):
-  """Embedding sequence-to-sequence model with attention.
-
-  This model first embeds encoder_inputs by a newly created embedding (of shape
-  [num_encoder_symbols x input_size]). Then it runs an RNN to encode
-  embedded encoder_inputs into a state vector. It keeps the outputs of this
-  RNN at every step to use for attention later. Next, it embeds decoder_inputs
-  by another newly created embedding (of shape [num_decoder_symbols x
-  input_size]). Then it runs attention decoder, initialized with the last
-  encoder state, on embedded decoder_inputs and attending to encoder outputs.
-
-  Warning: when output_projection is None, the size of the attention vectors
-  and variables will be made proportional to num_decoder_symbols, can be large.
-
-  Args:
-    encoder_inputs: A list of 1D int32 Tensors of shape [batch_size].
-    decoder_inputs: A list of 1D int32 Tensors of shape [batch_size].
-    cell: tf.nn.rnn_cell.RNNCell defining the cell function and size.
-    num_encoder_symbols: Integer; number of symbols on the encoder side.
-    num_decoder_symbols: Integer; number of symbols on the decoder side.
-    embedding_size: Integer, the length of the embedding vector for each symbol.
-    num_heads: Number of attention heads that read from attention_states.
-    output_projection: None or a pair (W, B) of output projection weights and
-      biases; W has shape [output_size x num_decoder_symbols] and B has
-      shape [num_decoder_symbols]; if provided and feed_previous=True, each
-      fed previous output will first be multiplied by W and added B.
-    feed_previous: Boolean or scalar Boolean Tensor; if True, only the first
-      of decoder_inputs will be used (the "GO" symbol), and all other decoder
-      inputs will be taken from previous outputs (as in embedding_rnn_decoder).
-      If False, decoder_inputs are used as given (the standard decoder case).
-    dtype: The dtype of the initial RNN state (default: tf.float32).
-    scope: VariableScope for the created subgraph; defaults to
-      "embedding_attention_seq2seq".
-    initial_state_attention: If False (default), initial attentions are zero.
-      If True, initialize the attentions from the initial state and attention
-      states.
-
-  Returns:
-    A tuple of the form (outputs, state), where:
-      outputs: A list of the same length as decoder_inputs of 2D Tensors with
-        shape [batch_size x num_decoder_symbols] containing the generated
-        outputs.
-      state: The state of each decoder cell at the final time-step.
-        It is a 2D Tensor of shape [batch_size x cell.state_size].
-  """
-  
-  with variable_scope.variable_scope(scope or "embedding_attention_seq2seq", dtype=dtype) as scope:
- 
-    if isinstance(feed_previous, bool):
-      print("is instance feed previous bool is true")
-      return embedding_attention_decoder(
-          decoder_inputs,
-          encoder_state,
-          attention_states,
-          num_decoder_symbols,
-          embedding_size,
-          num_heads=num_heads,
-          output_size=None,
-          output_projection=output_projection,
-          feed_previous=feed_previous,
-          initial_state_attention=initial_state_attention)
 
 def sequence_loss_by_example(logits,
                              targets,

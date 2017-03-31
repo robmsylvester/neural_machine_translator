@@ -83,11 +83,16 @@ class Seq2SeqModel(object):
     self.target_vocab_size = target_vocab_size
     self.buckets = buckets
     self.batch_size = batch_size
+
+
     self.learning_rate = tf.Variable(
         float(learning_rate), trainable=False, dtype=dtype)
     self.learning_rate_decay_op = self.learning_rate.assign(
         self.learning_rate * learning_rate_decay_factor)
+
     self.global_step = tf.Variable(0, trainable=False)
+
+
 
     # If we use sampled softmax, we need an output projection.
     output_projection = None
@@ -96,23 +101,28 @@ class Seq2SeqModel(object):
     # Sampled softmax only makes sense if we sample less than vocabulary size.
     if num_samples > 0 and num_samples < self.target_vocab_size:
 
-      #NOTE, shape[1] of the output projection weights should be equal to the output size of the final decoder layer
-      w_t = tf.get_variable("proj_w", [self.target_vocab_size, FLAGS.decoder_hidden_size], dtype=dtype)
-      w = tf.transpose(w_t)
-      b = tf.get_variable("proj_b", [self.target_vocab_size], dtype=dtype)
-      output_projection = (w, b)
+      output_projection = custom_contrib_seq2seq._create_output_projection(self.target_vocab_size,
+                                                                            FLAGS.decoder_hidden_size)
+      weights = output_projection[0]
+      biases = output_projection[1]
+      weights_t = output_projection[2]
+
+      #weights_t = tf.get_variable("output_projection_weights", [self.target_vocab_size, FLAGS.decoder_hidden_size], dtype=dtype)
+      #weights = tf.transpose(weights_t)
+      #biases = tf.get_variable("output_projection_biases", [self.target_vocab_size], dtype=dtype)
+      #output_projection = (weights, biases)
 
       def sampled_loss(labels, logits):
         labels = tf.reshape(labels, [-1, 1])
         # We need to compute the sampled_softmax_loss using 32bit floats to
         # avoid numerical instabilities.
-        local_w_t = tf.cast(w_t, tf.float32)
-        local_b = tf.cast(b, tf.float32)
+        #local_w_t = tf.cast(w_t, tf.float32)
+        #local_b = tf.cast(b, tf.float32)
         local_inputs = tf.cast(logits, tf.float32)
         return tf.cast(
             tf.nn.sampled_softmax_loss(
-                weights=local_w_t,
-                biases=local_b,
+                weights=weights_t,
+                biases=biases,
                 labels=labels,
                 inputs=local_inputs,
                 num_sampled=num_samples,
@@ -163,7 +173,7 @@ class Seq2SeqModel(object):
       if output_projection is not None:
         for b in xrange(len(buckets)):
           self.outputs[b] = [
-              tf.matmul(output, output_projection[0]) + output_projection[1]
+              tf.matmul(output, weights) + biases
               for output in self.outputs[b]
           ]
     else:

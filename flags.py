@@ -33,7 +33,7 @@ tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300,
 tf.app.flags.DEFINE_integer("loss_increases_per_decay", 2,
                             "The learning rate will decay if the loss is greater than the max of the last (this many) checkpoint losses.")
 
-tf.app.flags.DEFINE_boolean("decode", False,
+tf.app.flags.DEFINE_boolean("decode", True,
                             "Set to True for interactive decoding.")
 
 tf.app.flags.DEFINE_boolean("self_test", False,
@@ -48,7 +48,7 @@ tf.app.flags.DEFINE_boolean("use_fp16", False,
 tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
                             "If True, loads training set into memory. Otherwise, reads batches by opening files and reading appropriate lines.")
 
-tf.app.flags.DEFINE_integer("max_train_data_size", 400000,
+tf.app.flags.DEFINE_integer("max_train_data_size", 100000,
                             "Limit on the size of training data (0: no limit).")
 
 
@@ -72,15 +72,25 @@ tf.app.flags.DEFINE_integer("encoder_hidden_size", 512,
 tf.app.flags.DEFINE_integer("decoder_hidden_size", 512,
                             "Number of units in the hidden size of decoder LSTM layers. Bidirectional layers will therefore output 2*this")
 
+
+
+
+
 tf.app.flags.DEFINE_boolean("encoder_use_peepholes", False,
                             "Whether or not to use peephole (diagonal) connections on LSTMs in the encoder")
 tf.app.flags.DEFINE_boolean("decoder_use_peepholes", False,
                             "Whether or not to use peephole (diagonal) connections on LSTMs in the decoder")
 
+
+
+
 tf.app.flags.DEFINE_float("encoder_init_forget_bias", 0.0,
                             "The initial forget bias (0-1) to use for LSTMs in the encoder")
 tf.app.flags.DEFINE_float("decoder_init_forget_bias", 0.0,
                             "The initial forget bias (0-1) to use for LSTMs in the decoder")
+
+
+
 
 tf.app.flags.DEFINE_float("encoder_dropout_keep_probability", 1.0,
                             "The keep probability to use in the dropout wrapper for LSTM's in the encoder. To disable dropout, just use 1.0")

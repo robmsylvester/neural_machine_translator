@@ -170,17 +170,19 @@ def train():
 
       # Once in a while, we save checkpoint, print statistics, and run evals.
       if current_step % FLAGS.steps_per_checkpoint == 0:
+
         # Print statistics for the previous epoch.
         perplexity = math.exp(float(loss)) if loss < 300 else float("inf")
-        print ("global step %d learning rate %.4f step-time %.2f perplexity "
-               "%.2f" % (model.global_step.eval(), model.learning_rate.eval(),
+        print ("global step %d learning rate %.6f step-time %.2f perplexity "
+               "%.4f" % (model.global_step.eval(), model.learning_rate.eval(),
                          step_time, perplexity))
 
-        # Decrease learning rate if no improvement was seen over last 2 times.
+        # Decrease learning rate if no improvement was seen over last x times.
         if len(previous_losses) > 1 and loss > max(previous_losses[-1*FLAGS.loss_increases_per_decay:]):
           sess.run(model.learning_rate_decay_op)
           print("Decayed learning rate after seeing two consecutive increases in perplexity")
         previous_losses.append(loss)
+        
         # Save checkpoint and zero timer and loss.
         checkpoint_path = os.path.join(FLAGS.train_dir, "translate.ckpt")
         
