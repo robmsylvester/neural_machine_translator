@@ -127,7 +127,11 @@ def train():
     #The training set will be loaded into memory only if the user specifies in a flag, because
     #with large numbers of buckets, big models, or huge datasets, you can run out of memory easily
     if FLAGS.load_train_set_in_memory:
-      train_set = data_utils.load_dataset_in_memory(from_train, to_train, _buckets, max_size=FLAGS.max_train_data_size)
+      train_set = data_utils.load_dataset_in_memory(from_train,
+                                                    to_train,
+                                                    _buckets,
+                                                    ignore_lines=FLAGS.train_offset,
+                                                    max_size=FLAGS.max_train_data_size)
     else:
       raise NotImplementedError("Rob, write this method")
 
@@ -145,23 +149,43 @@ def train():
     print(train_buckets_scale)
 
     # This is the training loop.
-    step_time, loss = 0.0, 0.0
+    step_time = 0.0
+    loss = 0.0
     current_step = 0
     previous_losses = []
 
     while True:
+
       # Choose a bucket according to data distribution. We pick a random number
       # in [0, 1] and use the corresponding interval in train_buckets_scale.
-      random_number_01 = np.random.random_sample()
-      bucket_id = min([i for i in xrange(len(train_buckets_scale))
-                       if train_buckets_scale[i] > random_number_01])
 
-      # Get a batch and make a step.
+      #we will choose a random bucket
+      r_n = np.random.rand()
+
+      for bucket_idx, bucket_scale in enumerate(train_buckets_scale):
+        if bucket_scale > r_n:
+          bucket_id = bucket_idx
+          break
+
+      #Start a timer for training
       start_time = time.time()
-      encoder_inputs, decoder_inputs, target_weights = model.get_batch(
-          train_set, bucket_id, load_from_memory=FLAGS.load_train_set_in_memory)
-      _, step_loss, _ = model.step(sess, encoder_inputs, decoder_inputs,
-                                   target_weights, bucket_id, False)
+
+      #Get a batch from the model by choosing source-target bucket pairs that match the bucket id chosen.
+      #Target weights are necessary because they will allow us to weight how much we care about missing
+      #each of the logits. a naive implementation of this, and probably not a bad way to do it at all,
+      #is to just weight the PAD tokens at 0 and every other word as 1
+      encoder_inputs, decoder_inputs, target_weights = model.get_batch(train_set,
+                                                                        bucket_id,
+                                                                        load_from_memory=FLAGS.load_train_set_in_memory)
+      
+      #Run a step of the model. 
+      _, step_loss, _ = model.step(sess,
+                                   encoder_inputs,
+                                   decoder_inputs,
+                                   target_weights,
+                                   bucket_id,
+                                   False)
+
       step_time += (time.time() - start_time) / FLAGS.steps_per_checkpoint
       loss += step_loss / FLAGS.steps_per_checkpoint
       current_step += 1
@@ -182,7 +206,7 @@ def train():
           sess.run(model.learning_rate_decay_op)
           print("Decayed learning rate after seeing two consecutive increases in perplexity")
         previous_losses.append(loss)
-        
+
         # Save checkpoint and zero timer and loss.
         checkpoint_path = os.path.join(FLAGS.train_dir, "translate.ckpt")
         
@@ -192,19 +216,27 @@ def train():
           #TODO - wrap this in some sort of flag
           model.saver.save(sess, checkpoint_path, global_step=model.global_step)
 
-        step_time, loss = 0.0, 0.0
+        step_time = 0.0
+        loss = 0.0
         # Run evals on development set and print their perplexity.
         for bucket_id in xrange(len(_buckets)):
           if len(dev_set[bucket_id]) == 0:
-            print("  eval on validation set: empty bucket %d" % (bucket_id))
+            print("\teval on validation set: empty bucket %d" % (bucket_id))
             continue
-          encoder_inputs, decoder_inputs, target_weights = model.get_batch(
-              dev_set, bucket_id, load_from_memory=True)
-          _, eval_loss, _ = model.step(sess, encoder_inputs, decoder_inputs,
-                                       target_weights, bucket_id, True)
-          eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float(
-              "inf")
-          print("  eval on validation set: bucket %d perplexity %.2f" % (bucket_id, eval_ppx))
+          encoder_inputs, decoder_inputs, target_weights = model.get_batch(dev_set,
+                                                                          bucket_id,
+                                                                          load_from_memory=True)
+
+          _, eval_loss, _ = model.step(sess,
+                                        encoder_inputs,
+                                        decoder_inputs,
+                                        target_weights,
+                                        bucket_id,
+                                        True)
+
+          eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float("inf")
+
+          print("\teval on validation set: bucket %d perplexity %.4f" % (bucket_id, eval_ppx))
         sys.stdout.flush()
 
 

@@ -33,7 +33,7 @@ tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300,
 tf.app.flags.DEFINE_integer("loss_increases_per_decay", 2,
                             "The learning rate will decay if the loss is greater than the max of the last (this many) checkpoint losses.")
 
-tf.app.flags.DEFINE_boolean("decode", True,
+tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
 
 tf.app.flags.DEFINE_boolean("self_test", False,
@@ -48,8 +48,11 @@ tf.app.flags.DEFINE_boolean("use_fp16", False,
 tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
                             "If True, loads training set into memory. Otherwise, reads batches by opening files and reading appropriate lines.")
 
-tf.app.flags.DEFINE_integer("max_train_data_size", 100000,
+tf.app.flags.DEFINE_integer("max_train_data_size", 1000000,
                             "Limit on the size of training data (0: no limit).")
+
+tf.app.flags.DEFINE_integer("train_offset", 0,
+                            "ignore the first train_offset lines of the training file when loading the training set or getting randomly")
 
 
 

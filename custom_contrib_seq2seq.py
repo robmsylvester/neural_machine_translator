@@ -97,13 +97,14 @@ def _create_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_keep_prob
 
 def _create_output_projection(target_size,
                               output_size):
-
   #NOTE, shape[1] of the output projection weights should be equal to the output size of the final decoder layer
   #If, for some reason, I make the final output layer bidirectional or something else strange, this would be the
   #wrong size for the output
 
   #Notice we don't put this in a scope. It lives in the sequence model itself and gets passed between layers of the
-  #encoder and decoder.
+  #encoder and decoder. We return a transpose variable itself to speed up training so we don't have to do this back and
+  #forth between iterations. the weights transpose is necessary to pass to softmax. the weights themselves are used
+  #to speak to the attention decoder.
   weights_t = tf.get_variable("output_projection_weights", [target_size, output_size], dtype=tf.float32)
   weights = tf.transpose(weights_t)
   biases = tf.get_variable("output_projection_biases", [target_size], dtype=tf.float32)
@@ -614,6 +615,10 @@ def sequence_loss_by_example(logits,
   Raises:
     ValueError: If len(logits) is different from len(targets) or len(weights).
   """
+
+  #TODO - remove keyword argument here
+  assert softmax_loss_function is not None, "Must have a defined loss function passed into the sequence loss by example"
+
   if len(targets) != len(logits) or len(weights) != len(logits):
     raise ValueError("Lengths of logits, weights, and targets must be the same "
                      "%d, %d, %d." % (len(logits), len(weights), len(targets)))
@@ -625,12 +630,78 @@ def sequence_loss_by_example(logits,
         # TODO(irving,ebrevdo): This reshape is needed because
         # sequence_loss_by_example is called with scalars sometimes, which
         # violates our general scalar strictness policy.
+
+        print("WARNING - NO DEFINED SOFTMAX LOSS FUNCTION")
         target = array_ops.reshape(target, [-1])
         crossent = nn_ops.sparse_softmax_cross_entropy_with_logits(
             labels=target, logits=logit)
       else:
         crossent = softmax_loss_function(target, logit)
+
+
+
+
+
+
+
+
+
+
+      """
+
+      ROB, YOU LEFT OFF HERE.
+
+      Find a way to get the target weight cross entropy gone for padded id words without explicitly storing it as a 
+      trainable variable in the model file
+
+
+
+
+
+
+
+
+
+
+
+
+      """
+      #if weight.value==0.:
+      #  assert(target==data_utils.PAD_ID, "If weight is 0, target id should be pad_id")
+      #elif weight.value==1:
+      #  assert(target.value!=data_utils.PAD_ID, "If weight is 1, target id should be anything other than the pad id")
+      #else:
+      #  print("weight came through that was not equal to 1.0 or 0.0")
+      #  raise ValueError
+     
+      #print(weight.get_shape())
       log_perp_list.append(crossent * weight)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     log_perps = math_ops.add_n(log_perp_list)
     if average_across_timesteps:
       total_size = math_ops.add_n(weights)

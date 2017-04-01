@@ -321,7 +321,7 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
           from_dev_ids_path, to_dev_ids_path,
           from_vocab_path, to_vocab_path)
 
-def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, report_frequency=200000):
+def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ignore_lines=0, report_frequency=200000):
   """Read data from source and target files and put into buckets.
 
   Args:
@@ -333,6 +333,10 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, rep
       output for n-th line from the source_path.
     buckets - list of tuples (source max length, target max length) for
             - various sentence length buckets with which to append the data.
+    ignore_lines - integer, how many lines to ignore at the beginning of the file.
+                  at times, it may be easier to train on a few million at a time.
+                  then just stop the model and train on a different part of the data.
+                  this will allow you to load it all in memory
     max_size: maximum number of lines to read, all other will be ignored;
         if 0 or None, all lines will be read.
     report_frequency: integer to specify to console how often to report progress in processing file
@@ -355,6 +359,11 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, rep
       target = target_file.readline()
 
       while source and target:
+
+        #ignore the first x lines of the file
+        for k in range(ignore_lines+1):
+          source = source_file.readline() 
+          target = target_file.readline()         
 
         counter += 1
 
