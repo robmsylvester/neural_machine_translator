@@ -632,6 +632,7 @@ def sequence_loss_by_example(logits,
         # violates our general scalar strictness policy.
 
         print("WARNING - NO DEFINED SOFTMAX LOSS FUNCTION")
+        
         target = array_ops.reshape(target, [-1])
         crossent = nn_ops.sparse_softmax_cross_entropy_with_logits(
             labels=target, logits=logit)

@@ -42,7 +42,8 @@ import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 
-import data_utils
+import vocabulary_utils
+import download_utils
 import seq2seq_model
 
 
@@ -79,32 +80,10 @@ def create_model(session, forward_only):
 
 
 def train():
-  """Train a en->fr translation model using WMT data."""
-  from_train = None
-  to_train = None
-  from_dev = None
-  to_dev = None
-  if FLAGS.from_train_data and FLAGS.to_train_data:
-    from_train_data = FLAGS.from_train_data
-    to_train_data = FLAGS.to_train_data
-    from_dev_data = from_train_data
-    to_dev_data = to_train_data
-    if FLAGS.from_dev_data and FLAGS.to_dev_data:
-      from_dev_data = FLAGS.from_dev_data
-      to_dev_data = FLAGS.to_dev_data
-    from_train, to_train, from_dev, to_dev, _, _ = data_utils.prepare_data(
-        FLAGS.data_dir,
-        from_train_data,
-        to_train_data,
-        from_dev_data,
-        to_dev_data,
-        FLAGS.from_vocab_size,
-        FLAGS.to_vocab_size)
-  else:
-      # Prepare WMT data.
-      print("Preparing WMT data in %s" % FLAGS.data_dir)
-      from_train, to_train, from_dev, to_dev, _, _ = data_utils.prepare_wmt_data(
-          FLAGS.data_dir, FLAGS.from_vocab_size, FLAGS.to_vocab_size)
+
+  from_train, to_train, from_dev, to_dev, _, _ = vocabulary_utils.prepare_wmt_data(FLAGS.data_dir,
+                                                                                  FLAGS.from_vocab_size,
+                                                                                  FLAGS.to_vocab_size)
 
   with tf.Session() as sess:
     # Create model.
@@ -122,12 +101,12 @@ def train():
            % FLAGS.max_train_data_size)
 
     #Load the validation set in memory always, because its relatively small
-    dev_set = data_utils.load_dataset_in_memory(from_dev, to_dev, _buckets)
+    dev_set = vocabulary_utils.load_dataset_in_memory(from_dev, to_dev, _buckets)
 
     #The training set will be loaded into memory only if the user specifies in a flag, because
     #with large numbers of buckets, big models, or huge datasets, you can run out of memory easily
     if FLAGS.load_train_set_in_memory:
-      train_set = data_utils.load_dataset_in_memory(from_train,
+      train_set = vocabulary_utils.load_dataset_in_memory(from_train,
                                                     to_train,
                                                     _buckets,
                                                     ignore_lines=FLAGS.train_offset,
@@ -138,15 +117,11 @@ def train():
     train_bucket_sizes = [len(train_set[b]) for b in xrange(len(_buckets))]
     train_total_size = float(sum(train_bucket_sizes))
 
-    print(train_total_size)
-
     # A bucket scale is a list of increasing numbers from 0 to 1 that we'll use
     # to select a bucket. Length of [scale[i], scale[i+1]] is proportional to
     # the size if i-th training bucket, as used later.
     train_buckets_scale = [sum(train_bucket_sizes[:i + 1]) / train_total_size
                            for i in xrange(len(train_bucket_sizes))]
-
-    print(train_buckets_scale)
 
     # This is the training loop.
     step_time = 0.0
@@ -215,6 +190,8 @@ def train():
           print("new lowest loss. saving model")
           #TODO - wrap this in some sort of flag
           model.saver.save(sess, checkpoint_path, global_step=model.global_step)
+        else:
+          print("not saving model")
 
         step_time = 0.0
         loss = 0.0
@@ -247,12 +224,13 @@ def decode():
     model.batch_size = 1  # We decode one sentence at a time.
 
     # Load vocabularies.
+    
     en_vocab_path = os.path.join(FLAGS.data_dir,
-                                 "vocab%d.from" % FLAGS.from_vocab_size)
+                                 "vocabulary_%d.from" % FLAGS.from_vocab_size)
     fr_vocab_path = os.path.join(FLAGS.data_dir,
-                                 "vocab%d.to" % FLAGS.to_vocab_size)
-    en_vocab, _ = data_utils.initialize_vocabulary(en_vocab_path)
-    _, rev_fr_vocab = data_utils.initialize_vocabulary(fr_vocab_path)
+                                 "vocabulary_%d.to" % FLAGS.to_vocab_size)
+    en_vocab, _ = vocabulary_utils.initialize_vocabulary(en_vocab_path)
+    _, rev_fr_vocab = vocabulary_utils.initialize_vocabulary(fr_vocab_path)
 
     # Decode from standard input.
     sys.stdout.write("> ")
@@ -260,7 +238,7 @@ def decode():
     sentence = sys.stdin.readline()
     while sentence:
       # Get token-ids for the input sentence.
-      token_ids = data_utils.sentence_to_token_ids(tf.compat.as_bytes(sentence), en_vocab)
+      token_ids = vocabulary_utils.sentence_to_token_ids(tf.compat.as_bytes(sentence), en_vocab)
       # Which bucket does it belong to?
       bucket_id = len(_buckets) - 1
       for i, bucket in enumerate(_buckets):
@@ -279,8 +257,8 @@ def decode():
       # This is a greedy decoder - outputs are just argmaxes of output_logits.
       outputs = [int(np.argmax(logit, axis=1)) for logit in output_logits]
       # If there is an EOS symbol in outputs, cut them at that point.
-      if data_utils.EOS_ID in outputs:
-        outputs = outputs[:outputs.index(data_utils.EOS_ID)]
+      if vocabulary_utils.EOS_ID in outputs:
+        outputs = outputs[:outputs.index(vocabulary_utils.EOS_ID)]
       # Print out French sentence corresponding to outputs.
       print(" ".join([tf.compat.as_str(rev_fr_vocab[output]) for output in outputs]))
       print("> ", end="")

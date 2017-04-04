@@ -26,7 +26,7 @@ import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 import custom_contrib_seq2seq
-import data_utils
+import vocabulary_utils
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -304,7 +304,7 @@ class Seq2SeqModel(object):
       encoder_input, decoder_input = random.choice(data[bucket_id])
 
       # Encoder inputs are padded so they fill up the bucket length
-      encoder_pad = [data_utils.PAD_ID] * (encoder_size - len(encoder_input))
+      encoder_pad = [vocabulary_utils.PAD_ID] * (encoder_size - len(encoder_input))
 
       # Then we reverse the inputs as per Cho's recommendations
       encoder_inputs.append(list(reversed(encoder_input + encoder_pad)))
@@ -313,8 +313,8 @@ class Seq2SeqModel(object):
       decoder_pad_size = decoder_size - len(decoder_input) - 1
 
       #And we pad the decoder inputs to fill the rest of the bucket as well
-      decoder_inputs.append([data_utils.GO_ID] + decoder_input +
-                            [data_utils.PAD_ID] * decoder_pad_size)
+      decoder_inputs.append([vocabulary_utils.GO_ID] + decoder_input +
+                            [vocabulary_utils.PAD_ID] * decoder_pad_size)
 
     return encoder_size, decoder_size, encoder_inputs, decoder_inputs
 
@@ -342,7 +342,7 @@ class Seq2SeqModel(object):
     for batch_idx in xrange(self.batch_size):
       if length_idx < decoder_size - 1:
           target = decoder_inputs[batch_idx][length_idx + 1]
-      if length_idx == decoder_size - 1 or target == data_utils.PAD_ID:
+      if length_idx == decoder_size - 1 or target == vocabulary_utils.PAD_ID:
           batch_weight[batch_idx] = 0.0
     return batch_weight
 
@@ -385,8 +385,10 @@ class Seq2SeqModel(object):
     batch_weights = [self.weight_target_symbols(decoder_inputs, decoder_size, l_idx) for l_idx in xrange(decoder_size)]
 
     #split the array back into a list of symbols, which creates a list of [1,x] shapes, so we squeeze them into [x,] shapes
-    batch_encoder_inputs = [np.squeeze(i) for i in np.split(encoder_input_as_array, encoder_size, axis=0)]
-    batch_decoder_inputs = [np.squeeze(i) for i in np.split(decoder_input_as_array, decoder_size, axis=0)]
+    #in the event we have a batch size of 1, which means we are probably using the decoder, then squeeze would accidentally squeeze
+    #out an extra dimension, so we don't want that, hence we pass an axis=0
+    batch_encoder_inputs = [np.squeeze(i, axis=0) for i in np.split(encoder_input_as_array, encoder_size, axis=0)]
+    batch_decoder_inputs = [np.squeeze(i, axis=0) for i in np.split(decoder_input_as_array, decoder_size, axis=0)]
     end2 = time.time()
 
     #make sure they all match
@@ -404,6 +406,10 @@ class Seq2SeqModel(object):
 
     #raise ValueError("Intentionally stopping. Everything works!")
 
+    #print(batch_encoder_inputs[0].shape)
+    #print(len(batch_encoder_inputs))
+    #print(batch_decoder_inputs[0].shape)
+    #print(len(batch_decoder_inputs))
     return batch_encoder_inputs, batch_decoder_inputs, batch_weights
 
 
