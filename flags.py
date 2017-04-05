@@ -102,4 +102,6 @@ tf.app.flags.DEFINE_float("decoder_dropout_keep_probability", 1.0,
 
 
 def flag_test():
-    pass
+    #build flag tests for the rest of the flags for input checking. like this...
+    assert encoder_dropout_keep_probability <= 1.0 and encoder_dropout_keep_probability >= 0.0, "Encoder dropout keep probability must be between 0 and 1"
+    assert decoder_dropout_keep_probability <= 1.0 and decoder_dropout_keep_probability >= 0.0, "Decoder dropout keep probability must be between 0 and 1"
