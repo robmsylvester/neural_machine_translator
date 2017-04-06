@@ -77,11 +77,7 @@ from tensorflow.contrib.rnn.python.ops import rnn_cell
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl
 
-# TODO(ebrevdo): Remove once _linear is fully deprecated.
-#TODO(rob) - do this yourself with an fc layer
-#TODO(rob) - do this yourself too for output projection fc layer
 linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
-
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -632,7 +628,7 @@ def sequence_loss_by_example(logits,
         # violates our general scalar strictness policy.
 
         print("WARNING - NO DEFINED SOFTMAX LOSS FUNCTION")
-        
+
         target = array_ops.reshape(target, [-1])
         crossent = nn_ops.sparse_softmax_cross_entropy_with_logits(
             labels=target, logits=logit)

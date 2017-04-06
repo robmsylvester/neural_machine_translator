@@ -11,13 +11,13 @@ tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
 tf.app.flags.DEFINE_integer("batch_size", 16,
                             "Batch size to use during training.")
 
-tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "English vocabulary size.")
+tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "Source language vocabulary size.")
 
-tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "French vocabulary size.")
+tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "Target language vocabulary size.")
 
-tf.app.flags.DEFINE_string("data_dir", "/home/rob/WMT", "Data directory")
+tf.app.flags.DEFINE_string("data_dir", "/home/rob/WMT", "Directory where we will store the data as well as model checkpoint")
 
-tf.app.flags.DEFINE_string("train_dir", "/home/rob/WMT", "Training directory.")
+tf.app.flags.DEFINE_string("checkpoint_name", "translate.ckpt", "Name of the Tensorflow checkpoint file")
 
 tf.app.flags.DEFINE_string("from_train_data", None, "Training data.")
 
@@ -33,7 +33,7 @@ tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300,
 tf.app.flags.DEFINE_integer("loss_increases_per_decay", 2,
                             "The learning rate will decay if the loss is greater than the max of the last (this many) checkpoint losses.")
 
-tf.app.flags.DEFINE_boolean("decode", True,
+tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
 
 tf.app.flags.DEFINE_boolean("self_test", False,
@@ -77,13 +77,10 @@ tf.app.flags.DEFINE_integer("decoder_hidden_size", 512,
 
 
 
-
-
 tf.app.flags.DEFINE_boolean("encoder_use_peepholes", False,
                             "Whether or not to use peephole (diagonal) connections on LSTMs in the encoder")
 tf.app.flags.DEFINE_boolean("decoder_use_peepholes", False,
                             "Whether or not to use peephole (diagonal) connections on LSTMs in the decoder")
-
 
 
 
@@ -93,8 +90,6 @@ tf.app.flags.DEFINE_float("decoder_init_forget_bias", 0.0,
                             "The initial forget bias (0-1) to use for LSTMs in the decoder")
 
 
-
-
 tf.app.flags.DEFINE_float("encoder_dropout_keep_probability", 1.0,
                             "The keep probability to use in the dropout wrapper for LSTM's in the encoder. To disable dropout, just use 1.0")
 tf.app.flags.DEFINE_float("decoder_dropout_keep_probability", 1.0,
@@ -102,6 +97,7 @@ tf.app.flags.DEFINE_float("decoder_dropout_keep_probability", 1.0,
 
 
 def flag_test():
+    f = tf.app.flags.FLAGS
     #build flag tests for the rest of the flags for input checking. like this...
-    assert encoder_dropout_keep_probability <= 1.0 and encoder_dropout_keep_probability >= 0.0, "Encoder dropout keep probability must be between 0 and 1"
-    assert decoder_dropout_keep_probability <= 1.0 and decoder_dropout_keep_probability >= 0.0, "Decoder dropout keep probability must be between 0 and 1"
+    assert f.encoder_dropout_keep_probability <= 1.0 and f.encoder_dropout_keep_probability >= 0.0, "Encoder dropout keep probability must be between 0 and 1"
+    assert f.decoder_dropout_keep_probability <= 1.0 and f.decoder_dropout_keep_probability >= 0.0, "Decoder dropout keep probability must be between 0 and 1"

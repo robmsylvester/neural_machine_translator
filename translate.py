@@ -17,7 +17,7 @@
 
 Running this program without --decode will download the WMT corpus into
 the directory specified as --data_dir and tokenize it in a very basic way,
-and then start training a model saving checkpoints to --train_dir.
+and then start training a model saving checkpoints to the data directory.
 
 Running with --decode starts an interactive loop so you can see how
 the current checkpoint translates English sentences into French.
@@ -44,7 +44,7 @@ import tensorflow as tf
 
 import vocabulary_utils
 import download_utils
-import seq2seq_model
+import eda_model
 
 
 FLAGS = tf.app.flags.FLAGS
@@ -59,7 +59,7 @@ _buckets = [(8,12), (16, 24), (24,40)]
 def create_model(session, forward_only):
   """Create translation model and initialize or load parameters in session."""
   dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
-  model = seq2seq_model.Seq2SeqModel(
+  model = eda_model.EncoderDecoderAttentionModel(
       FLAGS.from_vocab_size,
       FLAGS.to_vocab_size,
       _buckets,
@@ -69,7 +69,7 @@ def create_model(session, forward_only):
       FLAGS.learning_rate_decay_factor,
       forward_only=forward_only,
       dtype=dtype)
-  ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
+  ckpt = tf.train.get_checkpoint_state(FLAGS.data_dir)
   if ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
     print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
     model.saver.restore(session, ckpt.model_checkpoint_path)
@@ -129,10 +129,10 @@ def train():
     current_step = 0
     previous_losses = []
 
-    while True:
+    #Start a best-model estimator
+    lowest_loss = float("inf")
 
-      # Choose a bucket according to data distribution. We pick a random number
-      # in [0, 1] and use the corresponding interval in train_buckets_scale.
+    while True:
 
       #we will choose a random bucket
       r_n = np.random.rand()
@@ -165,26 +165,25 @@ def train():
       loss += step_loss / FLAGS.steps_per_checkpoint
       current_step += 1
 
-      lowest_loss = float("inf")
-
       # Once in a while, we save checkpoint, print statistics, and run evals.
       if current_step % FLAGS.steps_per_checkpoint == 0:
 
         # Print statistics for the previous epoch.
         perplexity = math.exp(float(loss)) if loss < 300 else float("inf")
-        print ("global step %d learning rate %.6f step-time %.2f perplexity "
+        print ("global step %d report:\n\tlearning rate %.6f\n\tstep-time %.2f\n\tperplexity "
                "%.4f" % (model.global_step.eval(), model.learning_rate.eval(),
                          step_time, perplexity))
 
         # Decrease learning rate if no improvement was seen over last x times.
         if len(previous_losses) > 1 and loss > max(previous_losses[-1*FLAGS.loss_increases_per_decay:]):
           sess.run(model.learning_rate_decay_op)
-          print("Decayed learning rate after seeing two consecutive increases in perplexity")
+          print("Decayed learning rate after seeing %d consecutive increases in perplexity" % FLAGS.loss_increases_per_decay)
         previous_losses.append(loss)
 
         # Save checkpoint and zero timer and loss.
-        checkpoint_path = os.path.join(FLAGS.train_dir, "translate.ckpt")
+        checkpoint_path = os.path.join(FLAGS.data_dir, FLAGS.checkpoint_name)
         
+        #Only save the model if the loss is better than 
         if loss < lowest_loss:
           lowest_loss = loss
           print("new lowest loss. saving model")
@@ -195,6 +194,7 @@ def train():
 
         step_time = 0.0
         loss = 0.0
+
         # Run evals on development set and print their perplexity.
         for bucket_id in xrange(len(_buckets)):
           if len(dev_set[bucket_id]) == 0:
@@ -224,16 +224,17 @@ def decode():
     model.batch_size = 1  # We decode one sentence at a time.
 
     # Load vocabularies.
-    
     en_vocab_path = os.path.join(FLAGS.data_dir,
                                  "vocabulary_%d.from" % FLAGS.from_vocab_size)
     fr_vocab_path = os.path.join(FLAGS.data_dir,
                                  "vocabulary_%d.to" % FLAGS.to_vocab_size)
+
     en_vocab, _ = vocabulary_utils.initialize_vocabulary(en_vocab_path)
     _, rev_fr_vocab = vocabulary_utils.initialize_vocabulary(fr_vocab_path)
 
+
     # Decode from standard input.
-    sys.stdout.write("> ")
+    sys.stdout.write(">> ")
     sys.stdout.flush()
     sentence = sys.stdin.readline()
     while sentence:
@@ -251,11 +252,14 @@ def decode():
       # Get a 1-element batch to feed the sentence to the model.
       encoder_inputs, decoder_inputs, target_weights = model.get_batch(
           {bucket_id: [(token_ids, [])]}, bucket_id, load_from_memory=True)
+
       # Get output logits for the sentence.
       _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
                                        target_weights, bucket_id, True)
+
       # This is a greedy decoder - outputs are just argmaxes of output_logits.
       outputs = [int(np.argmax(logit, axis=1)) for logit in output_logits]
+
       # If there is an EOS symbol in outputs, cut them at that point.
       if vocabulary_utils.EOS_ID in outputs:
         outputs = outputs[:outputs.index(vocabulary_utils.EOS_ID)]

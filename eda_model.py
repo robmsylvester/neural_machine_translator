@@ -25,13 +25,13 @@ import time
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
-import custom_contrib_seq2seq
+import model_utils
 import vocabulary_utils
 
 FLAGS = tf.app.flags.FLAGS
 
 
-class Seq2SeqModel(object):
+class EncoderDecoderAttentionModel(object):
   """Sequence-to-sequence model with attention and for multiple buckets.
 
   This class implements a multi-layer recurrent neural network as encoder,
@@ -102,7 +102,7 @@ class Seq2SeqModel(object):
     # Sampled softmax only makes sense if we sample less than vocabulary size.
     if num_samples > 0 and num_samples < self.target_vocab_size:
 
-      output_projection = custom_contrib_seq2seq._create_output_projection(self.target_vocab_size,
+      output_projection = model_utils._create_output_projection(self.target_vocab_size,
                                                                             FLAGS.decoder_hidden_size)
       weights = output_projection[0]
       biases = output_projection[1]
@@ -133,7 +133,7 @@ class Seq2SeqModel(object):
 
     # The seq2seq function: we use embedding for the input and attention.
     def seq2seq_f(encoder_inputs, decoder_inputs, do_decode):
-      return custom_contrib_seq2seq.run_model(
+      return model_utils.run_model(
           encoder_inputs,
           decoder_inputs,
           num_encoder_symbols=source_vocab_size,
@@ -165,7 +165,7 @@ class Seq2SeqModel(object):
 
     # Training outputs and losses.
     if forward_only:
-      self.outputs, self.losses = custom_contrib_seq2seq.model_with_buckets(
+      self.outputs, self.losses = model_utils.model_with_buckets(
           self.encoder_inputs, self.decoder_inputs, targets,
           self.target_weights, buckets, lambda x, y: seq2seq_f(x, y, True),
           softmax_loss_function=softmax_loss_function)
@@ -178,7 +178,7 @@ class Seq2SeqModel(object):
               for output in self.outputs[b]
           ]
     else:
-      self.outputs, self.losses = custom_contrib_seq2seq.model_with_buckets(
+      self.outputs, self.losses = model_utils.model_with_buckets(
           self.encoder_inputs, self.decoder_inputs, targets,
           self.target_weights, buckets,
           lambda x, y: seq2seq_f(x, y, False),
