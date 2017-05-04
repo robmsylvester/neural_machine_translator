@@ -50,10 +50,11 @@ class EncoderDecoderAttentionModel(object):
                source_vocab_size,
                target_vocab_size,
                buckets,
-               max_gradient_norm,
+               max_clipped_gradient,
                batch_size,
                learning_rate,
                learning_rate_decay_factor,
+               min_learning_rate,
                use_lstm=True,
                num_samples=512,
                forward_only=False,
@@ -80,18 +81,20 @@ class EncoderDecoderAttentionModel(object):
       forward_only: if set, we do not construct the backward pass in the model.
       dtype: the data type to use to store internal variables.
     """
+    self.global_step = tf.Variable(0, trainable=False)
     self.source_vocab_size = source_vocab_size
     self.target_vocab_size = target_vocab_size
     self.buckets = buckets
     self.batch_size = batch_size
+    self.minimum_learning_rate = tf.constant(min_learning_rate, dtype=tf.float32)
+    self.learning_rate_decay_factor = tf.constant(learning_rate_decay_factor, dtype=tf.float32)
 
 
     self.learning_rate = tf.Variable(
         float(learning_rate), trainable=False, dtype=dtype)
-    self.learning_rate_decay_op = self.learning_rate.assign(
-        self.learning_rate * learning_rate_decay_factor)
 
-    self.global_step = tf.Variable(0, trainable=False)
+    self.learning_rate_decay_op = self.learning_rate.assign(
+        tf.maximum(self.minimum_learning_rate, self.learning_rate * self.learning_rate_decay_factor, "learning_rate_decay"))
 
 
 
@@ -193,7 +196,7 @@ class EncoderDecoderAttentionModel(object):
       for b in xrange(len(buckets)):
         gradients = tf.gradients(self.losses[b], params)
         clipped_gradients, norm = tf.clip_by_global_norm(gradients,
-                                                         max_gradient_norm)
+                                                         max_clipped_gradient)
         self.gradient_norms.append(norm)
         self.updates.append(opt.apply_gradients(
             zip(clipped_gradients, params), global_step=self.global_step))

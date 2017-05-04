@@ -10,6 +10,7 @@ import tarfile
 from six.moves import urllib
 from tensorflow.python.platform import gfile
 import download_utils
+import bucket_utils
 import tensorflow as tf
 
 # Special vocabulary symbols - we always put them at the start.
@@ -481,8 +482,8 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
 
 
 
-
-def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ignore_lines=0, report_frequency=200000):
+def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ignore_lines=0, report_frequency=200000,
+                            auto_build_buckets=False, num_auto_buckets=3):
   """Read data from source and target files and put into buckets.
 
   Args:
@@ -494,6 +495,7 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
       output for n-th line from the source_path.
     buckets - list of tuples (source max length, target max length) for
             - various sentence length buckets with which to append the data.
+            - or, if auto_build_buckets is True, this can be None
     ignore_lines - integer, how many lines to ignore at the beginning of the file.
                   at times, it may be easier to train on a few million at a time.
                   then just stop the model and train on a different part of the data.
@@ -501,6 +503,9 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
     max_size: maximum number of lines to read, all other will be ignored;
         if 0 or None, all lines will be read.
     report_frequency: integer to specify to console how often to report progress in processing file
+    auto_build_buckets: if True, will ignore buckets and instead create num_auto_buckets different buckets
+                  such that the number of data sentences will be split evenly between the buckets
+    num_auto_buckets: how many buckets to use in the auto build
 
   Returns:
     data_set: a list of length len(buckets); 
@@ -509,9 +514,13 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
       into the n-th bucket, i.e., such that len(source) < buckets[n][0] and
       len(target) < buckets[n][1];
       source and target are integer lists of token-ids.
+    buckets: the buckets to be used in the neural network.
   """
 
-  data_set = [ [] for _ in buckets]
+  if auto_build_buckets:
+    temp_data_set = [] #we don't have the bucket sizes, so we will get them later and write them all in one big bucket
+  else:
+    data_set = [ [] for _ in buckets] #we have the bucket sizes, so write straight to memory
 
   with tf.gfile.GFile(source_path, mode="r") as source_file:
     with tf.gfile.GFile(target_path, mode="r") as target_file:
@@ -522,6 +531,91 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
       while source and target:
 
         #ignore the first x lines of the file
+        if ignore_lines > 0:
+          print("Will skip the first %d lines of the dataset" % ignore_lines)
+        for k in range(ignore_lines+1):
+          source = source_file.readline() 
+          target = target_file.readline()         
+
+        counter += 1
+
+        if counter % report_frequency == 0:
+          print("reading data line %d" % counter)
+
+        #What we read is not quite an integer yet, so convert the string representations to actual integers.
+        source_ids = [ int(x) for x in source.split()]
+        target_ids = [ int(x) for x in target.split()]
+
+        #We always add the end of sentence to the target sentence and do it here so that it doesn't
+        #go above the max bucket size ever. 
+        target_ids.append(EOS_ID)
+
+        #Add to appropriate bucket based upon the sentence length
+        #If the sentence goes over the bucket length, it doesnt go in
+        if not auto_build_buckets:
+          for bucket_id, (source_size, target_size) in enumerate(buckets):
+            if len(source_ids) < source_size and len(target_ids) < target_size:
+              data_set[bucket_id].append([source_ids, target_ids])
+              break
+        else:
+          temp_data_set.append([source_ids, target_ids])
+
+        if max_size and counter >= max_size:
+          break
+
+        #Prepare next loop iteration
+        source = source_file.readline()
+        target = target_file.readline()
+
+
+  if auto_build_buckets:
+    print("Building data set lengths to prepare for determining ideal buckets...")
+    data_set_lengths = [ [len(sentence_pair[0]), len(sentence_pair[1])] for sentence_pair in temp_data_set]
+
+    buckets = bucket_utils.determine_ideal_bucket_sizes(data_set_lengths, num_auto_buckets)
+
+    data_set = [ [] for _ in buckets]
+    for bucket_id, (source_size, target_size) in enumerate(buckets):
+      if len(source_ids) < source_size and len(target_ids) < target_size:
+        data_set[bucket_id].append([source_ids, target_ids])
+
+  return data_set, buckets
+
+
+
+def get_dataset_sentence_lengths(source_path, target_path, max_size=None, ignore_lines=0, report_frequency=200000):
+  """Read data from source and target files and get their lengths so that they can be used to auto-build buckets
+
+  Args:
+    source_path: path to the files with integer-like token-ids for the source language.
+                 integer-like means they are still strings, obviously, but after being
+                 processed through the integerizer
+    target_path: path to the file with integer-like token-ids for the target language.
+      it must be aligned with the source file: n-th line contains the desired
+      output for n-th line from the source_path.
+    ignore_lines - integer, how many lines to ignore at the beginning of the file.
+                  at times, it may be easier to train on a few million at a time.
+                  then just stop the model and train on a different part of the data.
+                  this will allow you to load it all in memory
+    max_size: maximum number of lines to read, all other will be ignored;
+        if 0 or None, all lines will be read.
+    report_frequency: integer to specify to console how often to report progress in processing file
+
+  Returns:
+    data_set: a list of (x_i,y_i) tuples where x_i=truncated source sentence length at line i in source file, y_i=
+              truncated target sentence length at line i in target file
+  """
+  print("Reading dataset line lengths to determine ideal bucket lengths. ")
+  with tf.gfile.GFile(source_path, mode="r") as source_file:
+    with tf.gfile.GFile(target_path, mode="r") as target_file:
+      counter = 0
+      source = source_file.readline() 
+      target = target_file.readline()
+
+      while source and target:
+
+        #ignore the first x lines of the file
+        if ignore_lines > 0:
         for k in range(ignore_lines+1):
           source = source_file.readline() 
           target = target_file.readline()         
@@ -553,4 +647,4 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
         source = source_file.readline()
         target = target_file.readline()
 
-  return data_set
+  return data_set, buckets

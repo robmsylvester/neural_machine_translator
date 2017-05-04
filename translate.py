@@ -43,18 +43,22 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 
 import vocabulary_utils
+import bucket_utils
 import download_utils
 import eda_model
 
 
 FLAGS = tf.app.flags.FLAGS
 
-# We use a number of buckets and pad to the closest one for efficiency.
-# See seq2seq_model.Seq2SeqModel for details of how they work.
-#_buckets2 = [(5, 10), (10, 15), (20, 25), (40, 50)]
 
-#THESE WILL NEED TO CHANGE
-_buckets = [(8,12), (16, 24), (24,40)]
+
+if flags.use_default_buckets:
+  _buckets = bucket_utils.get_default_bucket_sizes(flags.num_buckets)
+  assert len(_buckets) == flags.num_buckets, "Flag for num buckets is %d but there are %d buckets" % (flags.num_buckets, len(_buckets))
+else:
+  _buckets = None #for now
+
+
 
 def create_model(session, forward_only):
   """Create translation model and initialize or load parameters in session."""
@@ -63,10 +67,11 @@ def create_model(session, forward_only):
       FLAGS.from_vocab_size,
       FLAGS.to_vocab_size,
       _buckets,
-      FLAGS.max_gradient_norm,
+      FLAGS.max_clipped_gradient,
       FLAGS.batch_size,
       FLAGS.learning_rate,
       FLAGS.learning_rate_decay_factor,
+      FLAGS.minimum_learning_rate,
       forward_only=forward_only,
       dtype=dtype)
   ckpt = tf.train.get_checkpoint_state(FLAGS.data_dir)
@@ -94,25 +99,31 @@ def train():
     else:
       print("Training set batches will be dynamically placed into buckets at each training step by reading from file")
 
-    model = create_model(sess, False)
-
     # Read data into buckets and compute their sizes.
     print ("Reading development and training data (limit: %d)."
            % FLAGS.max_train_data_size)
 
-    #Load the validation set in memory always, because its relatively small
-    dev_set = vocabulary_utils.load_dataset_in_memory(from_dev, to_dev, _buckets)
-
     #The training set will be loaded into memory only if the user specifies in a flag, because
     #with large numbers of buckets, big models, or huge datasets, you can run out of memory easily
     if FLAGS.load_train_set_in_memory:
-      train_set = vocabulary_utils.load_dataset_in_memory(from_train,
+      train_set, _buckets = vocabulary_utils.load_dataset_in_memory(from_train,
                                                     to_train,
                                                     _buckets,
                                                     ignore_lines=FLAGS.train_offset,
-                                                    max_size=FLAGS.max_train_data_size)
+                                                    max_size=FLAGS.max_train_data_size,
+                                                    auto_build_buckets=flags.use_default_buckets,
+                                                    num_auto_buckets=flags.num_buckets)
     else:
       raise NotImplementedError("Rob, write this method")
+
+    #Load the validation set in memory always, because its relatively small
+    dev_set, _ = vocabulary_utils.load_dataset_in_memory(from_dev,
+                                                          to_dev,
+                                                          _buckets)
+
+
+    model = create_model(sess, False)
+
 
     train_bucket_sizes = [len(train_set[b]) for b in xrange(len(_buckets))]
     train_total_size = float(sum(train_bucket_sizes))
