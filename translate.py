@@ -50,23 +50,13 @@ import eda_model
 
 FLAGS = tf.app.flags.FLAGS
 
-
-
-if flags.use_default_buckets:
-  _buckets = bucket_utils.get_default_bucket_sizes(flags.num_buckets)
-  assert len(_buckets) == flags.num_buckets, "Flag for num buckets is %d but there are %d buckets" % (flags.num_buckets, len(_buckets))
-else:
-  _buckets = None #for now
-
-
-
-def create_model(session, forward_only):
+def create_model(session, forward_only, buckets):
   """Create translation model and initialize or load parameters in session."""
   dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
   model = eda_model.EncoderDecoderAttentionModel(
       FLAGS.from_vocab_size,
       FLAGS.to_vocab_size,
-      _buckets,
+      buckets,
       FLAGS.max_clipped_gradient,
       FLAGS.batch_size,
       FLAGS.learning_rate,
@@ -85,6 +75,11 @@ def create_model(session, forward_only):
 
 
 def train():
+
+  if FLAGS.use_default_buckets:
+    _buckets = bucket_utils.get_default_bucket_sizes(FLAGS.num_buckets)
+  else:
+    _buckets = None
 
   from_train, to_train, from_dev, to_dev, _, _ = vocabulary_utils.prepare_wmt_data(FLAGS.data_dir,
                                                                                   FLAGS.from_vocab_size,
@@ -106,23 +101,52 @@ def train():
     #The training set will be loaded into memory only if the user specifies in a flag, because
     #with large numbers of buckets, big models, or huge datasets, you can run out of memory easily
     if FLAGS.load_train_set_in_memory:
-      train_set, _buckets = vocabulary_utils.load_dataset_in_memory(from_train,
+
+      if not FLAGS.use_default_buckets:
+        print("Will infer best bucket sizes according to candidate buckets defined in bucket_utils")
+        candidate_buckets = bucket_utils.get_candidate_bucket_sizes(FLAGS.num_buckets)
+        best_bucket_score = float("inf")
+        best_bucket_index = None
+        for idx,cb in enumerate(candidate_buckets):
+          candidate_train_set = vocabulary_utils.load_dataset_in_memory(from_train,
+                                              to_train,
+                                              cb,
+                                              ignore_lines=FLAGS.train_offset,
+                                              max_size=FLAGS.bucket_inference_sample_size)
+
+          bucket_score = bucket_utils.get_bucket_score(cb, candidate_train_set, minimum_bucket_data_ratio=FLAGS.minimum_data_ratio_per_bucket)
+
+          print("bucket score for this arrangement is %d" % bucket_score)
+
+          #score = how few padded words there are, under the constraints that the datasets are large enough (>= min ratio)
+          if bucket_score < best_bucket_score:
+            print("Best bucket score is now %d" % bucket_score)
+            best_bucket_score = bucket_score
+            best_bucket_index = idx
+          else:
+            print("This bucket sucks")
+
+        if best_bucket_index is not None:
+          _buckets = candidate_buckets[best_bucket_index]
+        else:
+          raise ValueError("No bucket could be found that was within your constraints of a minimum data ratio")
+      
+
+      train_set = vocabulary_utils.load_dataset_in_memory(from_train,
                                                     to_train,
                                                     _buckets,
                                                     ignore_lines=FLAGS.train_offset,
-                                                    max_size=FLAGS.max_train_data_size,
-                                                    auto_build_buckets=flags.use_default_buckets,
-                                                    num_auto_buckets=flags.num_buckets)
+                                                    max_size=FLAGS.max_train_data_size)
     else:
       raise NotImplementedError("Rob, write this method")
 
     #Load the validation set in memory always, because its relatively small
-    dev_set, _ = vocabulary_utils.load_dataset_in_memory(from_dev,
+    dev_set = vocabulary_utils.load_dataset_in_memory(from_dev,
                                                           to_dev,
                                                           _buckets)
 
 
-    model = create_model(sess, False)
+    model = create_model(sess, False, _buckets)
 
 
     train_bucket_sizes = [len(train_set[b]) for b in xrange(len(_buckets))]
@@ -230,8 +254,12 @@ def train():
 
 def decode():
   with tf.Session() as sess:
+
+    #TODO - remove inference for best buckets if you're using a decoder. 
+    _buckets = bucket_utils.get_default_bucket_sizes(FLAGS.num_buckets)
+
     # Create model and load parameters.
-    model = create_model(sess, True)
+    model = create_model(sess, True, _buckets)
     model.batch_size = 1  # We decode one sentence at a time.
 
     # Load vocabularies.

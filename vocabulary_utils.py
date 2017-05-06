@@ -124,6 +124,12 @@ def clean_sentence(sentence, language="en"):
   return sentence
 
 
+
+
+
+
+
+
 def clean_enfr_wmt_data(output_file,
                     input_file,
                     language="en",
@@ -171,6 +177,10 @@ def clean_enfr_wmt_data(output_file,
           print("read %d lines" % read_counter)
   print("Done.\nClean output dataset file created at %s" % output_file)
   return output_file
+
+
+
+
 
 
 
@@ -240,6 +250,10 @@ def create_vocabulary(output_vocabulary_path, input_data_path, max_vocabulary_si
 
 
 
+
+
+
+
 def get_sentence_length_distribution(input_file, max_length, report_frequency=500000):
   #read sentence lengths from the file. does not take tokenized sentences, but a raw file.
   #max_length is the max possible length a sentence can have. one more bin will be made above
@@ -267,6 +281,12 @@ def get_sentence_length_distribution(input_file, max_length, report_frequency=50
 
 
 
+
+
+
+
+
+
 def even_bucket_distribution(sentence_lengths, num_buckets):
   #this is just a naive implementation, since bucket lengths don't need to be exact, but we might as well get something in the ballpark
   #to get the buckets to some sane values by looking at some averages.
@@ -281,6 +301,13 @@ def even_bucket_distribution(sentence_lengths, num_buckets):
       bucket_sums.append(running_sum)
       running_sum = 0
   return bucket_indexes
+
+
+
+
+
+
+
 
 
 
@@ -320,6 +347,10 @@ def initialize_vocabulary(vocabulary_path):
 
 
 
+
+
+
+
 def sentence_to_token_ids(sentence, vocabulary,
                           tokenizer=None, normalize_digits=True):
   """Convert a string to list of integers representing token-ids.
@@ -345,6 +376,11 @@ def sentence_to_token_ids(sentence, vocabulary,
     words = vanilla_ft_tokenizer(sentence)
   
   return [vocabulary.get(w, UNK_ID) for w in words]
+
+
+
+
+
 
 
 
@@ -381,6 +417,15 @@ def integerize_sentence(data_path, target_path, vocabulary_path,
           tokens_file.write(" ".join([str(tok) for tok in token_ids]) + "\n")
 
 
+
+
+
+
+
+
+
+
+
 def prepare_wmt_data(data_dir, en_vocabulary_size, fr_vocabulary_size, tokenizer=None):
   """Get WMT data into data_dir, create vocabularies and tokenize data.
 
@@ -410,6 +455,12 @@ def prepare_wmt_data(data_dir, en_vocabulary_size, fr_vocabulary_size, tokenizer
   to_dev_path = dev_path + ".fr"
   return prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev_path, en_vocabulary_size,
                       fr_vocabulary_size, tokenizer)
+
+
+
+
+
+
 
 
 
@@ -482,8 +533,15 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
 
 
 
+
+
+
+
+
+
+
 def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ignore_lines=0, report_frequency=200000,
-                            auto_build_buckets=False, num_auto_buckets=3):
+                            report_bucket_distribution=False):
   """Read data from source and target files and put into buckets.
 
   Args:
@@ -503,9 +561,7 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
     max_size: maximum number of lines to read, all other will be ignored;
         if 0 or None, all lines will be read.
     report_frequency: integer to specify to console how often to report progress in processing file
-    auto_build_buckets: if True, will ignore buckets and instead create num_auto_buckets different buckets
-                  such that the number of data sentences will be split evenly between the buckets
-    num_auto_buckets: how many buckets to use in the auto build
+    report_bucket_distribution
 
   Returns:
     data_set: a list of length len(buckets); 
@@ -517,10 +573,8 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
     buckets: the buckets to be used in the neural network.
   """
 
-  if auto_build_buckets:
-    temp_data_set = [] #we don't have the bucket sizes, so we will get them later and write them all in one big bucket
-  else:
-    data_set = [ [] for _ in buckets] #we have the bucket sizes, so write straight to memory
+
+  data_set = [ [] for _ in buckets] #we have the bucket sizes, so write straight to memory
 
   with tf.gfile.GFile(source_path, mode="r") as source_file:
     with tf.gfile.GFile(target_path, mode="r") as target_file:
@@ -550,91 +604,6 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
         #go above the max bucket size ever. 
         target_ids.append(EOS_ID)
 
-        #Add to appropriate bucket based upon the sentence length
-        #If the sentence goes over the bucket length, it doesnt go in
-        if not auto_build_buckets:
-          for bucket_id, (source_size, target_size) in enumerate(buckets):
-            if len(source_ids) < source_size and len(target_ids) < target_size:
-              data_set[bucket_id].append([source_ids, target_ids])
-              break
-        else:
-          temp_data_set.append([source_ids, target_ids])
-
-        if max_size and counter >= max_size:
-          break
-
-        #Prepare next loop iteration
-        source = source_file.readline()
-        target = target_file.readline()
-
-
-  if auto_build_buckets:
-    print("Building data set lengths to prepare for determining ideal buckets...")
-    data_set_lengths = [ [len(sentence_pair[0]), len(sentence_pair[1])] for sentence_pair in temp_data_set]
-
-    buckets = bucket_utils.determine_ideal_bucket_sizes(data_set_lengths, num_auto_buckets)
-
-    data_set = [ [] for _ in buckets]
-    for bucket_id, (source_size, target_size) in enumerate(buckets):
-      if len(source_ids) < source_size and len(target_ids) < target_size:
-        data_set[bucket_id].append([source_ids, target_ids])
-
-  return data_set, buckets
-
-
-
-def get_dataset_sentence_lengths(source_path, target_path, max_size=None, ignore_lines=0, report_frequency=200000):
-  """Read data from source and target files and get their lengths so that they can be used to auto-build buckets
-
-  Args:
-    source_path: path to the files with integer-like token-ids for the source language.
-                 integer-like means they are still strings, obviously, but after being
-                 processed through the integerizer
-    target_path: path to the file with integer-like token-ids for the target language.
-      it must be aligned with the source file: n-th line contains the desired
-      output for n-th line from the source_path.
-    ignore_lines - integer, how many lines to ignore at the beginning of the file.
-                  at times, it may be easier to train on a few million at a time.
-                  then just stop the model and train on a different part of the data.
-                  this will allow you to load it all in memory
-    max_size: maximum number of lines to read, all other will be ignored;
-        if 0 or None, all lines will be read.
-    report_frequency: integer to specify to console how often to report progress in processing file
-
-  Returns:
-    data_set: a list of (x_i,y_i) tuples where x_i=truncated source sentence length at line i in source file, y_i=
-              truncated target sentence length at line i in target file
-  """
-  print("Reading dataset line lengths to determine ideal bucket lengths. ")
-  with tf.gfile.GFile(source_path, mode="r") as source_file:
-    with tf.gfile.GFile(target_path, mode="r") as target_file:
-      counter = 0
-      source = source_file.readline() 
-      target = target_file.readline()
-
-      while source and target:
-
-        #ignore the first x lines of the file
-        if ignore_lines > 0:
-        for k in range(ignore_lines+1):
-          source = source_file.readline() 
-          target = target_file.readline()         
-
-        counter += 1
-
-        if counter % report_frequency == 0:
-          print("reading data line %d" % counter)
-
-        #What we read is not quite an integer yet, so convert the string representations to actual integers.
-        source_ids = [ int(x) for x in source.split()]
-        target_ids = [ int(x) for x in target.split()]
-
-        #We always add the end of sentence to the target sentence and do it here so that it doesn't
-        #go above the max bucket size ever. 
-        target_ids.append(EOS_ID)
-
-        #Add to appropriate bucket based upon the sentence length
-        #If the sentence goes over the bucket length, it doesnt go in
         for bucket_id, (source_size, target_size) in enumerate(buckets):
           if len(source_ids) < source_size and len(target_ids) < target_size:
             data_set[bucket_id].append([source_ids, target_ids])
@@ -647,4 +616,4 @@ def get_dataset_sentence_lengths(source_path, target_path, max_size=None, ignore
         source = source_file.readline()
         target = target_file.readline()
 
-  return data_set, buckets
+  return data_set

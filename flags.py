@@ -24,7 +24,7 @@ tf.app.flags.DEFINE_string("to_dev_data", None, "Validation data.")
 tf.app.flags.DEFINE_integer("loss_increases_per_decay", 2,
                             "The learning rate will decay if the loss is greater than the max of the last (this many) checkpoint losses.")
 
-tf.app.flags.DEFINE_boolean("decode", True,
+tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
 
 tf.app.flags.DEFINE_boolean("self_test", False,
@@ -42,16 +42,10 @@ tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300,
 
 
 #Bucket Sizes
-tf.app.flags.DEFINE_boolean("use_default_buckets", True,
-                            "If true, default bucket sizes as defined in bucket_utils will be used. Otherwise, they will be dynamically adjusted to be even based upon the data")
-tf.app.flags.DEFINE_integer("num_buckets", 3
-                            "Will use this number to look up default bucket sizes, otherwise use this number to find good division of data with this many buckets")
-
-#Automatic-bucket 
-tf.app.flags.DEFINE_integer("max_source_bucket_size_to_check", 80,
-                            "When determining the ideal bucket sizes for the source sentences, nothing greater than this number will be checked")
-tf.app.flags.DEFINE_integer("max_target_bucket_size_to_check", 100,
-                            "When determining the ideal bucket sizes for the target sentences, nothing greater than this number will be checked")
+tf.app.flags.DEFINE_boolean("use_default_buckets", False, "Use the default bucket sizes defined in bucket_utils. Otherwise, will try candidate bucket sizes defined in bucket_utils")
+tf.app.flags.DEFINE_float("minimum_data_ratio_per_bucket", 0.1, "Each one of the buckets must have at least this ratio of the data in it.")
+tf.app.flags.DEFINE_integer("bucket_inference_sample_size", 1000000, "Only check this many data samples when trying to find the best distribution of the data for buckets")
+tf.app.flags.DEFINE_integer("num_buckets", 3, "Will use this number to look up default bucket sizes, otherwise use this number to find good division of data with this many buckets")
 
 
 #Learning Rate Flags
@@ -68,7 +62,7 @@ tf.app.flags.DEFINE_float("minimum_learning_rate", 0.005, "Minimum learning rate
 tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
                             "If True, loads training set into memory. Otherwise, reads batches by opening files and reading appropriate lines.")
 
-tf.app.flags.DEFINE_integer("max_train_data_size", 100000,
+tf.app.flags.DEFINE_integer("max_train_data_size", 2000000,
                             "Limit on the size of training data (0: no limit).")
 
 tf.app.flags.DEFINE_integer("train_offset", 0,
@@ -115,10 +109,13 @@ tf.app.flags.DEFINE_float("decoder_dropout_keep_probability", 1.0,
                             "The keep probability to use in the dropout wrapper for LSTM's in the decoder. To disable dropout, just use 1.0")
 
 
+#Flesh this out
 def flag_test():
     f = tf.app.flags.FLAGS
     #build flag tests for the rest of the flags for input checking. like this...
     assert f.encoder_dropout_keep_probability <= 1.0 and f.encoder_dropout_keep_probability >= 0.0, "Encoder dropout keep probability must be between 0 and 1"
     assert f.decoder_dropout_keep_probability <= 1.0 and f.decoder_dropout_keep_probability >= 0.0, "Decoder dropout keep probability must be between 0 and 1"
 
+
     assert f.num_buckets in [2,3,4,5], "Only between 2-5 buckets are supported, for now, but you can easily change this."
+    assert f.num_buckets * f.minimum_data_ratio_per_bucket < 1, "Product of the number of buckets (%d) and the data ratio per bucket (%f) must be less than 1" % (f.num_buckets, f.minimum_data_ratio_per_bucket)
