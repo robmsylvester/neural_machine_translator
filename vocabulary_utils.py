@@ -575,10 +575,16 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
 
 
   data_set = [ [] for _ in buckets] #we have the bucket sizes, so write straight to memory
+  unbucketed_data_ratio = 0.
+  unbucketed_data_set = []
 
   with tf.gfile.GFile(source_path, mode="r") as source_file:
     with tf.gfile.GFile(target_path, mode="r") as target_file:
+      print("Splitting training examples into buckets. Examples that do not fit into a bucket will not be used in training.")
+      
       counter = 0
+      found_bucket_count = 0
+
       source = source_file.readline() 
       target = target_file.readline()
 
@@ -604,10 +610,16 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
         #go above the max bucket size ever. 
         target_ids.append(EOS_ID)
 
+        found_bucket = False
         for bucket_id, (source_size, target_size) in enumerate(buckets):
           if len(source_ids) < source_size and len(target_ids) < target_size:
+            found_bucket = True
+            found_bucket_count += 1
             data_set[bucket_id].append([source_ids, target_ids])
             break
+
+        if not found_bucket:
+          unbucketed_data_set.append([source_ids, target_ids])
 
         if max_size and counter >= max_size:
           break
@@ -616,4 +628,14 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
         source = source_file.readline()
         target = target_file.readline()
 
-  return data_set
+  unbucketed_data_ratio = float(len(unbucketed_data_set)) / counter
+  if report_bucket_distribution:
+
+    print("**************Training Set Bucket Statistics******************")
+    print("Number of training sentence pairs: %d" % counter)
+    print("Training sentence bucket retention rate: %.4f" % (float(found_bucket_count) / counter))
+    for bucket_id, _ in enumerate(buckets):
+      print("Bucket %d distribution: %.4f" % (bucket_id, float(len(buckets[bucket_id])) / found_bucket_count))
+    print("No buckets: %.4f" % unbucketed_data_ratio)
+
+  return data_set, unbucketed_data_ratio

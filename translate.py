@@ -103,18 +103,18 @@ def train():
     if FLAGS.load_train_set_in_memory:
 
       if not FLAGS.use_default_buckets:
-        print("Will infer best bucket sizes according to candidate buckets defined in bucket_utils")
+        print("Will infer best bucket sizes according to candidate buckets defined in bucket_utils. Will limit analysis to %d samples" % FLAGS.bucket_inference_sample_size)
         candidate_buckets = bucket_utils.get_candidate_bucket_sizes(FLAGS.num_buckets)
         best_bucket_score = float("inf")
         best_bucket_index = None
         for idx,cb in enumerate(candidate_buckets):
-          candidate_train_set = vocabulary_utils.load_dataset_in_memory(from_train,
+          candidate_train_set, unbucketed_data_ratio = vocabulary_utils.load_dataset_in_memory(from_train,
                                               to_train,
                                               cb,
                                               ignore_lines=FLAGS.train_offset,
                                               max_size=FLAGS.bucket_inference_sample_size)
 
-          bucket_score = bucket_utils.get_bucket_score(cb, candidate_train_set, minimum_bucket_data_ratio=FLAGS.minimum_data_ratio_per_bucket)
+          bucket_score = bucket_utils.get_bucket_score(cb, candidate_train_set, unbucketed_data_ratio, minimum_bucket_data_ratio=FLAGS.minimum_data_ratio_per_bucket)
 
           print("bucket score for this arrangement is %d" % bucket_score)
 
@@ -123,8 +123,6 @@ def train():
             print("Best bucket score is now %d" % bucket_score)
             best_bucket_score = bucket_score
             best_bucket_index = idx
-          else:
-            print("This bucket sucks")
 
         if best_bucket_index is not None:
           _buckets = candidate_buckets[best_bucket_index]
@@ -132,16 +130,17 @@ def train():
           raise ValueError("No bucket could be found that was within your constraints of a minimum data ratio")
       
 
-      train_set = vocabulary_utils.load_dataset_in_memory(from_train,
+      train_set, _ = vocabulary_utils.load_dataset_in_memory(from_train,
                                                     to_train,
                                                     _buckets,
                                                     ignore_lines=FLAGS.train_offset,
-                                                    max_size=FLAGS.max_train_data_size)
+                                                    max_size=FLAGS.max_train_data_size,
+                                                    report_bucket_distribution=True)
     else:
       raise NotImplementedError("Rob, write this method")
 
     #Load the validation set in memory always, because its relatively small
-    dev_set = vocabulary_utils.load_dataset_in_memory(from_dev,
+    dev_set, _ = vocabulary_utils.load_dataset_in_memory(from_dev,
                                                           to_dev,
                                                           _buckets)
 
