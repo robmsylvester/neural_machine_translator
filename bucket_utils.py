@@ -3,9 +3,15 @@ import tensorflow as tf
 
 FLAGS = tf.app.flags.FLAGS
 
+#TODO - these else cases for these first two functions
+#TODO - experiment more with what a "good v bad bucket" function is.
+
 def get_default_bucket_sizes(num_buckets):
 	if num_buckets == 3:
-		return [(8,12), (16, 24), (24,40)]
+		return [(10,15), (20, 30), (32,50)]
+	else:
+		raise ValueError("get_default_bucket_sizes has only been implemented for three buckets. If you're trying more buckets, add them in this function.")
+
 	#TODO - finish this up
 
 #These are where we explicitly store some of the bucket sizes that have been tested, as well as provide test cases

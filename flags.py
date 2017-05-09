@@ -42,7 +42,7 @@ tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300,
 
 
 #Bucket Sizes
-tf.app.flags.DEFINE_boolean("use_default_buckets", False, "Use the default bucket sizes defined in bucket_utils. Otherwise, will try candidate bucket sizes defined in bucket_utils")
+tf.app.flags.DEFINE_boolean("use_default_buckets", True, "Use the default bucket sizes defined in bucket_utils. Otherwise, will try candidate bucket sizes defined in bucket_utils")
 tf.app.flags.DEFINE_float("minimum_data_ratio_per_bucket", 0.1, "Each one of the buckets must have at least this ratio of the data in it.")
 tf.app.flags.DEFINE_integer("bucket_inference_sample_size", 1000000, "Only check this many data samples when trying to find the best distribution of the data for buckets")
 tf.app.flags.DEFINE_integer("num_buckets", 3, "Will use this number to look up default bucket sizes, otherwise use this number to find good division of data with this many buckets")

@@ -580,7 +580,7 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
 
   with tf.gfile.GFile(source_path, mode="r") as source_file:
     with tf.gfile.GFile(target_path, mode="r") as target_file:
-      print("Splitting training examples into buckets. Examples that do not fit into a bucket will not be used in training.")
+      #print("Splitting training examples into buckets. Examples that do not fit into a bucket will not be used in training.")
       
       counter = 0
       found_bucket_count = 0
@@ -634,8 +634,9 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
     print("**************Training Set Bucket Statistics******************")
     print("Number of training sentence pairs: %d" % counter)
     print("Training sentence bucket retention rate: %.4f" % (float(found_bucket_count) / counter))
-    for bucket_id, _ in enumerate(buckets):
-      print("Bucket %d distribution: %.4f" % (bucket_id, float(len(buckets[bucket_id])) / found_bucket_count))
+    for bucket_id, bucket in enumerate(data_set):
+      print (found_bucket_count)
+      print("Bucket %d distribution: %.4f" % (bucket_id, float(len(bucket)) / found_bucket_count))
     print("No buckets: %.4f" % unbucketed_data_ratio)
 
   return data_set, unbucketed_data_ratio
