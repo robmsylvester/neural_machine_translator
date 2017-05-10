@@ -62,7 +62,7 @@ tf.app.flags.DEFINE_float("minimum_learning_rate", 0.005, "Minimum learning rate
 tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
                             "If True, loads training set into memory. Otherwise, reads batches by opening files and reading appropriate lines.")
 
-tf.app.flags.DEFINE_integer("max_train_data_size", 2000000,
+tf.app.flags.DEFINE_integer("max_train_data_size", 200000,
                             "Limit on the size of training data (0: no limit).")
 
 tf.app.flags.DEFINE_integer("train_offset", 0,

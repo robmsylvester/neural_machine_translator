@@ -91,7 +91,7 @@ class EncoderDecoderAttentionModel(object):
 
 
     self.learning_rate = tf.Variable(
-        float(learning_rate), trainable=False, dtype=dtype)
+        float(learning_rate), trainable=True, dtype=dtype)
 
     self.learning_rate_decay_op = self.learning_rate.assign(
         tf.maximum(self.minimum_learning_rate, self.learning_rate * self.learning_rate_decay_factor, "learning_rate_decay"))

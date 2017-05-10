@@ -35,6 +35,21 @@ def _create_decoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
   return c
 
 
+
+
+#in some models, when the output is not the exact desired shape, this function will
+#apply a projection to it to transform it into the proper dimensions.
+def _apply_output_projection(output, output_projection_weights_and_biases):
+    with ops.name_scope(name, "xw_plus_b", [x, weights, biases]) as name:
+      x = ops.convert_to_tensor(x, name="x")
+      weights = ops.convert_to_tensor(weights, name="weights")
+      biases = ops.convert_to_tensor(biases, name="biases")
+      mm = math_ops.matmul(x, weights)
+      return bias_add(mm, biases, name=name)
+
+
+
+
 def _extract_argmax_and_embed(embedding,
                               output_projection=None,
                               update_embedding=True):
@@ -53,7 +68,16 @@ def _extract_argmax_and_embed(embedding,
 
   def loop_function(prev, _):
     if output_projection is not None:
-      prev = nn_ops.xw_plus_b(prev, output_projection[0], output_projection[1])
+      with variable_scope.variable_scope(scope or "output_proj", dtype=dtype) as scope:
+
+        print("see an output projection. scope is " + str(scope))
+        print(type(output_projection[0]))
+        print(type(output_projection[1]))
+
+        #output_proj[0] is weights, output_proj[1] is biases
+        prev = tf.add(tf.matmul(prev, output_projection[0]), output_projection[1])
+      
+      #prev = nn_ops.xw_plus_b(prev, output_projection[0], output_projection[1])
     prev_symbol = math_ops.argmax(prev, 1)
     # Note that gradients will not propagate through the second parameter of
     # embedding_lookup.
@@ -63,6 +87,84 @@ def _extract_argmax_and_embed(embedding,
     return emb_prev
 
   return loop_function
+
+
+def validate_attention_decoder_inputs(decoder_inputs, num_heads, attention_states):
+
+  if not decoder_inputs:
+    raise ValueError("Your attention decoder has no decoder inputs")
+  if num_heads < 1:
+    raise ValueError("The number of heads to the attention decoder must be a positive integer. It is %d" % num_heads)
+  if attention_states.get_shape()[2].value is None:
+    raise ValueError("The attention_size of the attention states must be known. Attention states come in the order (batch_size, attention_length, attention_size). This shape of this input now is %s" %
+                     attention_states.get_shape())
+  
+  attn_length = attention_states.get_shape()[1].value
+  if attn_length is None:
+    attn_length = array_ops.shape(attention_states)[1]
+
+  attn_size = attention_states.get_shape()[2].value
+
+  return attn_length, attn_size
+
+
+# this runs a 4-layer LSTM with residual connections from layers 0 -> 2, 0 -> 3, and 1 -> 3, and with no bidirectionality.
+# TODO - modularize this to read from JSON like I did with image project
+#
+#attn_input will be the attentive input to the decoder in all cases
+#hidden states are the hidden states of the LSTM's at each layer in the stack. must be equal to the number of layers.
+#scope is the scope with which to run this function, and for now is a keyword argument that I should probably clean up.
+#
+#
+def decoder_rnn(attn_input, hidden_states, num_layers=None, scope=None):
+
+  #TODO - this
+  if scope is None:
+    raise ValueError("scope cannot be None in decoder_rnn. This has not been implemented. Easy fix, so do it Rob.")
+
+  if num_layers != len(hidden_states):
+    raise ValueError("expected %d hidden states. instead only see %d hidden states" % (num_layers, len(hidden_states)))
+
+  with variable_scope.variable_scope(scope.name+'/fw0') as scope:
+    fw0 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
+                        FLAGS.decoder_use_peepholes,
+                        FLAGS.decoder_init_forget_bias,
+                        FLAGS.decoder_dropout_keep_probability)
+    outputs0, hidden_states[0] = fw0(attn_input, hidden_states[0], scope=scope)
+  
+  with variable_scope.variable_scope(scope.name+"/fw1") as scope:
+    fw1 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
+                        FLAGS.decoder_use_peepholes,
+                        FLAGS.decoder_init_forget_bias,
+                        FLAGS.decoder_dropout_keep_probability)
+    outputs1, hidden_states[1] = fw1(outputs0, hidden_states[1], scope=scope)
+  
+  with variable_scope.variable_scope(scope.name+"/fw2") as scope:
+    fw2 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
+                        FLAGS.decoder_use_peepholes,
+                        FLAGS.decoder_init_forget_bias,
+                        FLAGS.decoder_dropout_keep_probability)
+
+    #add a residual connection to the outputs from the first layer
+    #we don't need to call unstack here because the inputs into the __call__ function of the LSTMCell
+    #are a single tensor, not a list of tensors.
+    inputs2 = tf.add_n([outputs0,outputs1], name="residual_decoder_layer2_input")
+    outputs2, hidden_states[2] = fw2(inputs2, hidden_states[2], scope=scope)
+  
+  with variable_scope.variable_scope(scope.name+"/fw3") as scope:
+    fw3 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
+                        FLAGS.decoder_use_peepholes,
+                        FLAGS.decoder_init_forget_bias,
+                        FLAGS.decoder_dropout_keep_probability)
+
+    #add a reisdual connection to the outputs from the second layer
+    inputs3 = tf.add_n([outputs1, outputs2], name="residual_decoder_layer4_input")
+    outputs3, hidden_states[3] = fw3(inputs3, hidden_states[3], scope=scope)
+
+  output_size = fw3.output_size
+
+  #we only care about the final output, but we need all the hidden cell states to pass back to this function later
+  return outputs3, hidden_states, output_size
 
 
 
@@ -127,23 +229,31 @@ def attention_decoder(decoder_inputs,
       of attention_states are not set, or input size cannot be inferred
       from the input.
   """
-  if not decoder_inputs:
-    raise ValueError("Must provide at least 1 input to attention decoder.")
-  if num_heads < 1:
-    raise ValueError("With less than 1 heads, use a non-attention decoder.")
-  if attention_states.get_shape()[2].value is None:
-    raise ValueError("Shape[2] of attention_states must be known: %s" %
-                     attention_states.get_shape())
+
 
   with variable_scope.variable_scope(scope or "attention_decoder", dtype=dtype) as scope:
-    restore_scope=scope
+
+    #verify we have known shapes and nonzero inputs
+    attn_length, attn_size = validate_attention_decoder_inputs(decoder_inputs, num_heads, attention_states)
+
+    #store a scope reference as well as a datatype reference for book-keeping and debugging
+    restore_scope = scope
     dtype = scope.dtype
 
-    batch_size = array_ops.shape(decoder_inputs[0])[0]  # Needed for reshaping.
-    attn_length = attention_states.get_shape()[1].value
-    if attn_length is None:
-      attn_length = array_ops.shape(attention_states)[1]
-    attn_size = attention_states.get_shape()[2].value
+    #we need to store the batch size of the decoder inputs to use later for reshaping.
+    # because these come in as a list of tensors, just take the first one.
+    #batch_size = tf.get_shape(decoder_inputs[0]).as_list()[0]
+
+    #assert batch_size == array_ops.shape(decoder_inputs[0])[0], "expected equality. didn't get it"
+    
+    #batch_size = array_ops.shape(decoder_inputs[0])[0]  # Needed for reshaping.
+
+    #attn_length = attention_states.get_shape()[1].value
+
+
+    #if attn_length is None:
+      #attn_length = array_ops.shape(attention_states)[1]
+    #attn_size = attention_states.get_shape()[2].value
 
     # To calculate W1 * h_t we use a 1-by-1 convolution, need to reshape before.
     hidden = array_ops.reshape(attention_states,
@@ -158,7 +268,13 @@ def attention_decoder(decoder_inputs,
       v.append(
           variable_scope.get_variable("AttnV_%d" % a, [attention_vec_size]))
 
-    state = initial_state
+
+    outputs = []
+    prev = None
+    num_decoder_layers = 4
+    hidden_states = [initial_state for _ in xrange(num_decoder_layers)]
+
+
 
     def attention(query):
       """Put attention masks on hidden using hidden_features and query."""
@@ -184,18 +300,25 @@ def attention_decoder(decoder_inputs,
           ds.append(array_ops.reshape(d, [-1, attn_size]))
       return ds
 
-    outputs = []
-    prev = None
-    batch_attn_size = array_ops.stack([batch_size, attn_size])
+
+    #we need to store the batch size of the decoder inputs to use later for reshaping.
+    # because these come in as a list of tensors, just take the first one.
+    # this will store a TENSOR of one-dimension with the batch_size shape.
+    batch_size = tf.shape(decoder_inputs[0])[0]
+
+    #the size of the batch attention will be batch_size x attention size, and we stack these values along the 0 axis
+    batch_attn_size = tf.stack([batch_size, attn_size])
+    
     attns = [
         array_ops.zeros(
             batch_attn_size, dtype=dtype) for _ in xrange(num_heads)
     ]
+
+
     for a in attns:  # Ensure the second shape of attention vectors is set.
       a.set_shape([None, attn_size])
     if initial_state_attention:
       attns = attention(initial_state)
-
 
     for i, inp in enumerate(decoder_inputs):
 
@@ -204,7 +327,9 @@ def attention_decoder(decoder_inputs,
       # If loop_function is set, we use it instead of decoder_inputs.
       if loop_function is not None and prev is not None:
         with variable_scope.variable_scope("loop_function", reuse=True):
+          print("about to call loop function. scope is " + str(scope.name))
           inp = loop_function(prev, i)
+      print("done with loop function, scope is " + str(scope.name))
 
       # Merge input and previous attentions into one vector of the right size.
       input_size = inp.get_shape().with_rank(2)[1]
@@ -212,10 +337,20 @@ def attention_decoder(decoder_inputs,
         raise ValueError("Could not infer input size from input: %s" % inp.name)
       attentive_input = linear([inp] + attns, input_size, True)
 
+      #initialize the hidden states of the network if i==0
+
+      #Run the RNN
+      decoder_output, hidden_states, output_size = decoder_rnn(attentive_input,
+                                                              hidden_states,
+                                                              num_layers=num_decoder_layers,
+                                                              scope=restore_scope)
+      decoder_state = hidden_states[-1]
+      scope = restore_scope
+
       # Run the RNN.
       #TODO - ("Gotta do something here for constructing decoder")
       #cell_output, state = cell(x, state)
-
+      """
       with variable_scope.variable_scope(restore_scope.name+'/fw1') as scope:
         fw1 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
                             FLAGS.decoder_use_peepholes,
@@ -253,6 +388,8 @@ def attention_decoder(decoder_inputs,
         decoder_output, decoder_state = fw4(inputs4, decoder_state if i>0 else initial_state, scope=scope)
 
       output_size = fw4.output_size
+      scope = restore_scope
+      """
       
       # Run the attention mechanism.
       if i == 0 and initial_state_attention:
