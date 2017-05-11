@@ -21,7 +21,8 @@ import custom_core_rnn as core_rnn
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl
 
-linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access #TODO - make this not so fucking old
+#This is very similar to a dot product in this implementation between inputs and weights
+linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -33,20 +34,6 @@ def _create_decoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
   if dropout_keep_prob < 1.0:
     c = core_rnn_cell_impl.DropoutWrapper(c, output_keep_prob=dropout_keep_prob)
   return c
-
-
-
-
-#in some models, when the output is not the exact desired shape, this function will
-#apply a projection to it to transform it into the proper dimensions.
-def _apply_output_projection(output, output_projection_weights_and_biases):
-    with ops.name_scope(name, "xw_plus_b", [x, weights, biases]) as name:
-      x = ops.convert_to_tensor(x, name="x")
-      weights = ops.convert_to_tensor(weights, name="weights")
-      biases = ops.convert_to_tensor(biases, name="biases")
-      mm = math_ops.matmul(x, weights)
-      return bias_add(mm, biases, name=name)
-
 
 
 
@@ -69,16 +56,9 @@ def _extract_argmax_and_embed(embedding,
   def loop_function(prev, _):
     if output_projection is not None:
       with variable_scope.variable_scope(scope or "output_proj", dtype=dtype) as scope:
-
-        print("see an output projection. scope is " + str(scope))
-        print(type(output_projection[0]))
-        print(type(output_projection[1]))
-
-        #output_proj[0] is weights, output_proj[1] is biases
         prev = tf.add(tf.matmul(prev, output_projection[0]), output_projection[1])
-      
-      #prev = nn_ops.xw_plus_b(prev, output_projection[0], output_projection[1])
-    prev_symbol = math_ops.argmax(prev, 1)
+
+    prev_symbol = tf.argmax(prev, 1)
     # Note that gradients will not propagate through the second parameter of
     # embedding_lookup.
     emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
@@ -109,13 +89,15 @@ def validate_attention_decoder_inputs(decoder_inputs, num_heads, attention_state
 
 
 # this runs a 4-layer LSTM with residual connections from layers 0 -> 2, 0 -> 3, and 1 -> 3, and with no bidirectionality.
-# TODO - modularize this to read from JSON like I did with image project
 #
-#attn_input will be the attentive input to the decoder in all cases
+#parameters - 
+#attn_input, Tensor, will be the attentive input to the decoder in all cases
 #hidden states are the hidden states of the LSTM's at each layer in the stack. must be equal to the number of layers.
 #scope is the scope with which to run this function, and for now is a keyword argument that I should probably clean up.
 #
+# returns - 
 #
+#TODO - modularize this to read from JSON like I did with image project
 def decoder_rnn(attn_input, hidden_states, num_layers=None, scope=None):
 
   #TODO - this
@@ -165,6 +147,52 @@ def decoder_rnn(attn_input, hidden_states, num_layers=None, scope=None):
 
   #we only care about the final output, but we need all the hidden cell states to pass back to this function later
   return outputs3, hidden_states, output_size
+
+
+"""
+def attention_mechanism(input_vector, dec_state ):
+
+  #The input_vector is the input state to attention mechanism.
+
+
+  attention_reads = []
+
+  #if the query is a 
+  if nest.is_sequence(query_state):
+    query_
+
+
+
+
+
+
+
+
+
+
+      if nest.is_sequence(query):  # If the query is a tuple, flatten it.
+        query_list = nest.flatten(query)
+        for q in query_list:  # Check that ndims == 2 if specified.
+          ndims = q.get_shape().ndims
+          if ndims:
+            assert ndims == 2
+        query = array_ops.concat(query_list, 1)
+      for a in xrange(num_heads):
+        with variable_scope.variable_scope("Attention_%d" % a):
+
+          y = linear(query, attention_vec_size, True)
+
+          y = array_ops.reshape(y, [-1, 1, 1, attention_vec_size])
+          # Attention mask is a softmax of v^T * tanh(...).
+          s = math_ops.reduce_sum(v[a] * math_ops.tanh(hidden_features[a] + y),
+                                  [2, 3])
+          a = nn_ops.softmax(s)
+          # Now calculate the attention-weighted vector d.
+          d = math_ops.reduce_sum(
+              array_ops.reshape(a, [-1, attn_length, 1, 1]) * hidden, [1, 2])
+          ds.append(array_ops.reshape(d, [-1, attn_size]))
+      return ds
+"""
 
 
 
@@ -256,8 +284,14 @@ def attention_decoder(decoder_inputs,
     #attn_size = attention_states.get_shape()[2].value
 
     # To calculate W1 * h_t we use a 1-by-1 convolution, need to reshape before.
+
+    print("the attention decoder has been called with attention states sized " + str(attention_states.get_shape()))
+
     hidden = array_ops.reshape(attention_states,
                                [-1, attn_length, 1, attn_size])
+
+    print("the attention decoder has reshaped the attention state to size " + str(hidden.get_shape()))
+
     hidden_features = []
     v = []
     attention_vec_size = attn_size  # Size of query vectors for attention.
@@ -267,7 +301,7 @@ def attention_decoder(decoder_inputs,
       hidden_features.append(nn_ops.conv2d(hidden, k, [1, 1, 1, 1], "SAME"))
       v.append(
           variable_scope.get_variable("AttnV_%d" % a, [attention_vec_size]))
-
+      print("the attention decoder has reshaped the attention state to a new size using 1x1 convolution. now size is " + str(hidden_features[a].get_shape()))
 
     outputs = []
     prev = None
@@ -276,29 +310,57 @@ def attention_decoder(decoder_inputs,
 
 
 
-    def attention(query):
+    def attention(query_state):
       """Put attention masks on hidden using hidden_features and query."""
-      ds = []  # Results of attention reads will be stored here.
-      if nest.is_sequence(query):  # If the query is a tuple, flatten it.
-        query_list = nest.flatten(query)
-        for q in query_list:  # Check that ndims == 2 if specified.
-          ndims = q.get_shape().ndims
-          if ndims:
-            assert ndims == 2
-        query = array_ops.concat(query_list, 1)
-      for a in xrange(num_heads):
+      #query state is the last decoder state from the top layer of the LSTM decoder stack that we can pass to the attention model
+      # after each decoder step
+
+      attention_reads = [] #This will be built dynamically as we read through the attention heads
+
+      assert query_state.__class__.__name__ == 'LSTMStateTuple', "The decoder state passed to the attention model must be an LSTMStateTuple (c,h)"
+
+      #TODO - probably can clean this up
+      #first, flatten the cell state and hidden state
+      query_list = nest.flatten(query_state)
+      for q in query_list:  # Check that ndims == 2 if specified.
+        ndims = q.get_shape().ndims
+        if ndims:
+          assert ndims == 2
+
+      query_state = array_ops.concat(query_list, 1)
+      print("The attention mechanism has flattened the query shape to " + str(query_state.get_shape()))
+      
+      for head_idx in xrange(num_heads):
         with variable_scope.variable_scope("Attention_%d" % a):
-          y = linear(query, attention_vec_size, True)
+
+          print("applying linear transformation with attention vector size " + str(attention_vec_size))
+
+          #we apply a linear transformation to the (batch_size, decoder_hidden_size*2 query state to transform it into the size of our attention vector)
+          #this i
+          y = linear(query_state, attention_vec_size, True)
+
+          print("after transformation, new shape is " + str(y.get_shape()))
+
           y = array_ops.reshape(y, [-1, 1, 1, attention_vec_size])
+
+          print("after reshape squeeze, new shape is " + str(y.get_shape()))
           # Attention mask is a softmax of v^T * tanh(...).
-          s = math_ops.reduce_sum(v[a] * math_ops.tanh(hidden_features[a] + y),
+          s = math_ops.reduce_sum(v[a] * math_ops.tanh(hidden_features[head_idx] + y),
                                   [2, 3])
+
+          print("after attention hyperbolic tangent function, new shape is " + str(s.get_shape()))
           a = nn_ops.softmax(s)
+
+          print("after softmax function, new shape is " + str(a.get_shape()))
+
           # Now calculate the attention-weighted vector d.
           d = math_ops.reduce_sum(
               array_ops.reshape(a, [-1, attn_length, 1, 1]) * hidden, [1, 2])
-          ds.append(array_ops.reshape(d, [-1, attn_size]))
-      return ds
+
+          print("after attention weighted representation of vector, new shape is " + str(d.get_shape()))
+          attention_reads.append(array_ops.reshape(d, [-1, attn_size]))
+          print("this representation has been reshaped to the final shape of " + str(ds[-1].get_shape()))
+      return attention_reads
 
 
     #we need to store the batch size of the decoder inputs to use later for reshaping.
@@ -314,7 +376,6 @@ def attention_decoder(decoder_inputs,
             batch_attn_size, dtype=dtype) for _ in xrange(num_heads)
     ]
 
-
     for a in attns:  # Ensure the second shape of attention vectors is set.
       a.set_shape([None, attn_size])
     if initial_state_attention:
@@ -322,14 +383,14 @@ def attention_decoder(decoder_inputs,
 
     for i, inp in enumerate(decoder_inputs):
 
+      print("Running attention mechanism on decoder input index %d" % i)
+
       if i > 0:
         variable_scope.get_variable_scope().reuse_variables()
       # If loop_function is set, we use it instead of decoder_inputs.
       if loop_function is not None and prev is not None:
         with variable_scope.variable_scope("loop_function", reuse=True):
-          print("about to call loop function. scope is " + str(scope.name))
           inp = loop_function(prev, i)
-      print("done with loop function, scope is " + str(scope.name))
 
       # Merge input and previous attentions into one vector of the right size.
       input_size = inp.get_shape().with_rank(2)[1]
@@ -347,50 +408,8 @@ def attention_decoder(decoder_inputs,
       decoder_state = hidden_states[-1]
       scope = restore_scope
 
-      # Run the RNN.
-      #TODO - ("Gotta do something here for constructing decoder")
-      #cell_output, state = cell(x, state)
-      """
-      with variable_scope.variable_scope(restore_scope.name+'/fw1') as scope:
-        fw1 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
-                            FLAGS.decoder_use_peepholes,
-                            FLAGS.decoder_init_forget_bias,
-                            FLAGS.decoder_dropout_keep_probability)
-        outputs1, state1 = fw1(attentive_input, state1 if i>0 else initial_state, scope=scope)
-      
-      with variable_scope.variable_scope(restore_scope.name+"/fw2") as scope:
-        fw2 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
-                            FLAGS.decoder_use_peepholes,
-                            FLAGS.decoder_init_forget_bias,
-                            FLAGS.decoder_dropout_keep_probability)
-        outputs2, state2 = fw2(outputs1, state2 if i>0 else initial_state, scope=scope)
-      
-      with variable_scope.variable_scope(restore_scope.name+"/fw3") as scope:
-        fw3 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
-                            FLAGS.decoder_use_peepholes,
-                            FLAGS.decoder_init_forget_bias,
-                            FLAGS.decoder_dropout_keep_probability)
+      #print("The shape of the final decoder state that will be passed to the attention mechanism is" + str(decoder_state.get_shape()))
 
-        #add a residual connection to the outputs from the first layer
-        #we don't need to call unstack here because the inputs into the __call__ function of the LSTMCell
-        #are a single tensor, not a list of tensors.
-        inputs3 = tf.add_n([outputs1,outputs2], name="residual_decoder_layer3_input")
-        outputs3, state3 = fw3(inputs3, state3 if i>0 else initial_state, scope=scope)
-      
-      with variable_scope.variable_scope(restore_scope.name+"/fw4") as scope:
-        fw4 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
-                            FLAGS.decoder_use_peepholes,
-                            FLAGS.decoder_init_forget_bias,
-                            FLAGS.decoder_dropout_keep_probability)
-
-        #add a reisdual connection to the outputs from the second layer
-        inputs4 = tf.add_n([outputs2, outputs3], name="residual_decoder_layer4_input")
-        decoder_output, decoder_state = fw4(inputs4, decoder_state if i>0 else initial_state, scope=scope)
-
-      output_size = fw4.output_size
-      scope = restore_scope
-      """
-      
       # Run the attention mechanism.
       if i == 0 and initial_state_attention:
         with variable_scope.variable_scope(
@@ -398,6 +417,8 @@ def attention_decoder(decoder_inputs,
           attns = attention(decoder_state)
       else:
         attns = attention(decoder_state)
+
+      print("after calling attention mechanism, the output shape of the first item in the attns list is " + str(attns[0].get_shape()))
 
       with variable_scope.variable_scope("AttnOutputProjection"):
         decoder_output = linear([decoder_output] + attns, output_size, True)
