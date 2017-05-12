@@ -29,15 +29,15 @@ def run_encoder(encoder_inputs,
   with variable_scope.variable_scope(scope or "encoder", dtype=dtype) as scope:
     restore_scope = scope #TODO, just store this as scope.name and remove the .name reference in the layer statements
     dtype = scope.dtype
-
+    print("at the beginning of the encoder_rnn layer 1, the scope name is %s" % scope.name)
     #First layer is a bidirectional lstm with embedding wrappers
     with variable_scope.variable_scope(restore_scope.name+"/fw1") as scope:
+
       fw1 = _create_encoder_lstm(FLAGS.encoder_hidden_size,
                           FLAGS.encoder_use_peepholes,
                           FLAGS.encoder_init_forget_bias,
                           FLAGS.encoder_dropout_keep_probability)
       encoder_fw1 = core_rnn_cell.EmbeddingWrapper(fw1, embedding_classes=num_encoder_symbols, embedding_size=embedding_size)
-    
     with variable_scope.variable_scope(restore_scope.name+"/bw1") as scope:
       bw1 = _create_encoder_lstm(FLAGS.encoder_hidden_size,
                           FLAGS.encoder_use_peepholes,
@@ -92,7 +92,8 @@ def run_encoder(encoder_inputs,
                           FLAGS.encoder_init_forget_bias,
                           FLAGS.encoder_dropout_keep_probability)
       encoder_outputs, encoder_state = core_rnn.static_rnn(fw4, inputs4, dtype=dtype)
-
+      print("at the end of the encoder_rnn layer 4, the scope name is %s" % scope.name)
+    print("at the end of the encoder_rnn, the scope name is %s" % scope.name)
     #Make sure everything went alright
     #TODO - turn these OFF when not testing to speed things up.
     assert type(encoder_state) is core_rnn_cell_impl.LSTMStateTuple, "encoder_state should be an LSTMStateTuple. state is tuple is now true by default in TF."
