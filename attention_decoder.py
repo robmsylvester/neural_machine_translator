@@ -55,8 +55,7 @@ def _extract_argmax_and_embed(embedding,
 
   def loop_function(prev, _):
     if output_projection is not None:
-      with variable_scope.variable_scope(scope or "output_proj", dtype=dtype) as scope:
-        prev = tf.add(tf.matmul(prev, output_projection[0]), output_projection[1])
+      prev = tf.add(tf.matmul(prev, output_projection[0]), output_projection[1])
 
     prev_symbol = tf.argmax(prev, 1)
     # Note that gradients will not propagate through the second parameter of
@@ -110,14 +109,14 @@ def decoder_rnn(attn_input, hidden_states, num_layers=None):
                         FLAGS.decoder_dropout_keep_probability)
     outputs0, hidden_states[0] = fw0(attn_input, hidden_states[0], scope=scope)
 
-    print("at the end of the decoder_rnn layer 1, the scope name is %s" % scope.name)
+    #print("at the end of the decoder_rnn layer 1, the scope name is %s" % scope.name)
   with variable_scope.variable_scope('decoder_layer_1') as scope:
     fw1 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
                         FLAGS.decoder_use_peepholes,
                         FLAGS.decoder_init_forget_bias,
                         FLAGS.decoder_dropout_keep_probability)
     outputs1, hidden_states[1] = fw1(outputs0, hidden_states[1], scope=scope)
-    print("at the end of the decoder_rnn layer 2, the scope name is %s" % scope.name)  
+    #print("at the end of the decoder_rnn layer 2, the scope name is %s" % scope.name)  
   with variable_scope.variable_scope('decoder_layer_2') as scope:
     fw2 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
                         FLAGS.decoder_use_peepholes,
@@ -129,7 +128,7 @@ def decoder_rnn(attn_input, hidden_states, num_layers=None):
     #are a single tensor, not a list of tensors.
     inputs2 = tf.add_n([outputs0,outputs1], name="residual_decoder_layer2_input")
     outputs2, hidden_states[2] = fw2(inputs2, hidden_states[2], scope=scope)
-    print("at the end of the decoder_rnn layer 3, the scope name is %s" % scope.name)
+    #print("at the end of the decoder_rnn layer 3, the scope name is %s" % scope.name)
   with variable_scope.variable_scope('decoder_layer_3') as scope:
     fw3 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
                         FLAGS.decoder_use_peepholes,
@@ -139,7 +138,7 @@ def decoder_rnn(attn_input, hidden_states, num_layers=None):
     #add a reisdual connection to the outputs from the second layer
     inputs3 = tf.add_n([outputs1, outputs2], name="residual_decoder_layer4_input")
     outputs3, hidden_states[3] = fw3(inputs3, hidden_states[3], scope=scope)
-    print("at the end of the decoder_rnn layer 4, the scope name is %s" % scope.name)
+    #print("at the end of the decoder_rnn layer 4, the scope name is %s" % scope.name)
   output_size = fw3.output_size
 
   #we only care about the final output, but we need all the hidden cell states to pass back to this function later
@@ -206,27 +205,27 @@ def run_attention_mechanism(query_state, reshaped_attention_states, hidden_atten
   #    assert ndims == 2
 
 
-  print(query_state.get_shape())
-  print("The attention mechanism has flattened the query shape to " + str(query_state.get_shape()))
+  #print(query_state.get_shape())
+  #print("The attention mechanism has flattened the query shape to " + str(query_state.get_shape()))
   
   attention_vec_size = attention_size
 
   for head_idx in xrange(num_attention_heads):
     with variable_scope.variable_scope("Attention_%d" % head_idx):
 
-      print("applying linear transformation with attention vector size " + str(attention_vec_size))
+      #print("applying linear transformation with attention vector size " + str(attention_vec_size))
 
       #we apply a linear transformation to the (batch_size, decoder_hidden_size*2) query state to 
       #transform it into the size of our attention vector)
       #this gives us another set of weights, namely weights_2, or U in the above definition
       weighted_new_state = linear(query_state, attention_vec_size, True)
 
-      print("after transformation, new shape is " + str(weighted_new_state.get_shape()))
+      #print("after transformation, new shape is " + str(weighted_new_state.get_shape()))
 
       #this vector needs to be reshaped into the same shape as the hidden features.
       weighted_new_state = array_ops.reshape(weighted_new_state, [-1, 1, 1, attention_vec_size])
 
-      print("after reshape squeeze, new shape is " + str(weighted_new_state.get_shape()))
+      #print("after reshape squeeze, new shape is " + str(weighted_new_state.get_shape()))
       
       # Attention mask is a softmax of V^T * tanh(W_1 * attention_states + W_2 * new_state)
       # The first term in the tangent function is W_1*attention_states, and the second term is U*new_state
@@ -235,19 +234,19 @@ def run_attention_mechanism(query_state, reshaped_attention_states, hidden_atten
       s = math_ops.reduce_sum(weights_v[head_idx] * math_ops.tanh(hidden_attention_states[head_idx] + weighted_new_state),
                               [2, 3])
 
-      print("after attention hyperbolic tangent function, new shape is " + str(s.get_shape()))
+      #print("after attention hyperbolic tangent function, new shape is " + str(s.get_shape()))
       
       softmax_attention_weights = nn_ops.softmax(s)
 
-      print("after softmax function, new shape is " + str(softmax_attention_weights.get_shape()))
+      #print("after softmax function, new shape is " + str(softmax_attention_weights.get_shape()))
 
       # Now calculate the attention-weighted vector d.
       weighted_attention = math_ops.reduce_sum(
           array_ops.reshape(softmax_attention_weights, [-1, attention_length, 1, 1]) * reshaped_attention_states, [1, 2])
 
-      print("after attention weighted representation of vector, new shape is " + str(weighted_attention.get_shape()))
+      #print("after attention weighted representation of vector, new shape is " + str(weighted_attention.get_shape()))
       attention_reads.append(array_ops.reshape(weighted_attention, [-1, attention_size]))
-      print("this representation has been reshaped to the final shape of " + str(attention_reads[-1].get_shape()))
+      #print("this representation has been reshaped to the final shape of " + str(attention_reads[-1].get_shape()))
   return attention_reads
 
 
@@ -323,13 +322,13 @@ def attention_decoder(decoder_inputs,
     #verify we have known shapes and nonzero inputs
     attn_length, attn_size = validate_attention_decoder_inputs(decoder_inputs, num_heads, attention_states)
 
-    print("called attention decoder. current scope is %s" % scope.name)
+    #print("called attention decoder. current scope is %s" % scope.name)
 
     #store a scope reference as well as a datatype reference for book-keeping and debugging
     restore_scope = scope
     dtype = scope.dtype
 
-    print("the attention decoder has been called with attention states sized " + str(attention_states.get_shape()))
+    #print("the attention decoder has been called with attention states sized " + str(attention_states.get_shape()))
 
     #the attention states come in and they are shaped (probably) as such:
     #   (batch size, 1 (or whatever length), attention_size)
@@ -337,7 +336,7 @@ def attention_decoder(decoder_inputs,
     reshaped_attention_states = array_ops.reshape(attention_states,
                                [-1, attn_length, 1, attn_size])
 
-    print("the attention decoder has reshaped the attention state to size " + str(reshaped_attention_states.get_shape()))
+    #print("the attention decoder has reshaped the attention state to size " + str(reshaped_attention_states.get_shape()))
 
     #we need to construct the following equation:
     #attention = softmax(V^T * tanh(W_1 * attention_states + W_2 * new_state)), where new_state is produced on each cell output
@@ -355,7 +354,7 @@ def attention_decoder(decoder_inputs,
           variable_scope.get_variable("attention_v_head_%d" % head_idx, [attention_vec_size])
       )
 
-    print("the attention decoder has reshaped the attention state to a new size using 1x1 convolution. now size is " + str(hidden_attention_states[head_idx].get_shape()))
+    #print("the attention decoder has reshaped the attention state to a new size using 1x1 convolution. now size is " + str(hidden_attention_states[head_idx].get_shape()))
 
     outputs = []
     prev = None
@@ -378,13 +377,19 @@ def attention_decoder(decoder_inputs,
     for a in attns:  # Ensure the second shape of attention vectors is set.
       a.set_shape([None, attn_size])
     if initial_state_attention:
-      attns = run_attention_mechanism(initial_state, reshaped_attention_states, hidden_attention_states, weights_v, num_heads, attn_size, attn_length)
+      attns = run_attention_mechanism(initial_state,
+                                      reshaped_attention_states,
+                                      hidden_attention_states,
+                                      weights_v,
+                                      num_heads,
+                                      attn_size,
+                                      attn_length)
 
-    print("about to start enumerating decoder inputs. current scope is %s" % scope.name)
+    #print("about to start enumerating decoder inputs. current scope is %s" % scope.name)
 
     for i, inp in enumerate(decoder_inputs):
 
-      print("Running attention mechanism on decoder input index %d" % i)
+      #print("Running attention mechanism on decoder input index %d" % i)
 
       if i > 0:
         variable_scope.get_variable_scope().reuse_variables()
@@ -392,7 +397,6 @@ def attention_decoder(decoder_inputs,
       if loop_function is not None and prev is not None:
         with variable_scope.variable_scope("loop_function", reuse=True):
           inp = loop_function(prev, i)
-
 
       #TODO - refactor this
       # Merge input and previous attentions into one vector of the right size.
@@ -405,7 +409,7 @@ def attention_decoder(decoder_inputs,
 
       #initialize the hidden states of the network if i==0
 
-      print("about to call decoder_rnn. current scope is %s" % scope.name)
+      #print("about to call decoder_rnn. current scope is %s" % scope.name)
       
       #Run the RNN through the decoder architecture
       decoder_output, hidden_states, output_size = decoder_rnn(attentive_input,
@@ -425,7 +429,7 @@ def attention_decoder(decoder_inputs,
       else:
         attns = run_attention_mechanism(decoder_state, reshaped_attention_states, hidden_attention_states, weights_v, num_heads, attn_size, attn_length)
 
-      print("after calling attention mechanism, the output shape of the first item in the attns list is " + str(attns[0].get_shape()))
+      #print("after calling attention mechanism, the output shape of the first item in the attns list is " + str(attns[0].get_shape()))
 
       #Now that we have all the pieces for the output from the decoder, we have one final parameter to train,
       # namely, the weight and bias vector that will be used to transform the dimensionality of our output

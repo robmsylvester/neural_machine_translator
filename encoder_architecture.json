@@ -1,0 +1,50 @@
+{
+	"num_layers": 4,
+	"layers": {
+		"encoder0": {
+			"lstm": true,
+			"layer": 0,
+			"peepholes" : false,
+			"bidirectional" : true,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : [],
+			"merge_mode" : false,
+		},
+		"encoder1": {
+			"lstm": true,
+			"layer": 1,
+			"peepholes" : false,
+			"bidirectional" : true,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : [0],
+			"merge_mode" : "concat"
+		},
+		"encoder2": {
+			"lstm": true,
+			"layer": 2,
+			"peepholes" : false,
+			"bidirectional" : false,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : [0,1],
+			"merge_mode" : "sum"
+
+		},
+		"encoder3": {
+			"lstm": true,
+			"layer": 0,
+			"peepholes" : false,
+			"bidirectional" : false,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : [],
+			"merge_mode" : "sum"
+		},
+	}
+}

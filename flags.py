@@ -4,6 +4,7 @@ import tensorflow as tf
 tf.app.flags.DEFINE_float("max_clipped_gradient", 5.0,
                           "Clip gradients to this norm.")
 
+#this should probably be a larger number
 tf.app.flags.DEFINE_integer("batch_size", 16,
                             "Batch size to use during training.")
 
@@ -21,7 +22,7 @@ tf.app.flags.DEFINE_string("from_dev_data", None, "Validation data.")
 
 tf.app.flags.DEFINE_string("to_dev_data", None, "Validation data.")
 
-tf.app.flags.DEFINE_integer("loss_increases_per_decay", 2,
+tf.app.flags.DEFINE_integer("loss_increases_per_decay", 3,
                             "The learning rate will decay if the loss is greater than the max of the last (this many) checkpoint losses.")
 
 tf.app.flags.DEFINE_boolean("decode", False,
@@ -49,7 +50,8 @@ tf.app.flags.DEFINE_integer("num_buckets", 3, "Will use this number to look up d
 
 
 #Learning Rate Flags
-tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
+tf.app.flags.DEFINE_float("learning_rate", 0.0271, "Learning rate.")
+#at 316,000 this was .0217
 
 tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
                           "Learning rate decays by this much.")
@@ -117,5 +119,5 @@ def flag_test():
     assert f.decoder_dropout_keep_probability <= 1.0 and f.decoder_dropout_keep_probability >= 0.0, "Decoder dropout keep probability must be between 0 and 1"
 
 
-    assert f.num_buckets in [2,3,4,5], "Only between 2-5 buckets are supported, for now, but you can easily change this."
+    assert f.num_buckets in [3], "Only 3 buckets are supported, for now, but you can easily change this. Just pass in bucket sizes."
     assert f.num_buckets * f.minimum_data_ratio_per_bucket < 1, "Product of the number of buckets (%d) and the data ratio per bucket (%f) must be less than 1" % (f.num_buckets, f.minimum_data_ratio_per_bucket)
