@@ -3,47 +3,47 @@
 	"layers": {
 		"encoder0": {
 			"lstm": true,
-			"layer": 0,
 			"peepholes" : false,
 			"bidirectional" : true,
+			"expected_input_size" : -1,
 			"hidden_size" : 512,
 			"dropout_keep_prob" : 1.0,
 			"init_forget_bias" : 0.0,
 			"input_layers" : [],
-			"merge_mode" : false,
+			"merge_mode" : "concat",
 		},
 		"encoder1": {
 			"lstm": true,
-			"layer": 1,
 			"peepholes" : false,
 			"bidirectional" : true,
+			"expected_input_size" : 1024,
 			"hidden_size" : 512,
 			"dropout_keep_prob" : 1.0,
 			"init_forget_bias" : 0.0,
-			"input_layers" : [0],
+			"input_layers" : ["encoder0"],
 			"merge_mode" : "concat"
 		},
 		"encoder2": {
 			"lstm": true,
-			"layer": 2,
 			"peepholes" : false,
 			"bidirectional" : false,
+			"expected_input_size" : 1024,
 			"hidden_size" : 512,
 			"dropout_keep_prob" : 1.0,
 			"init_forget_bias" : 0.0,
-			"input_layers" : [0,1],
+			"input_layers" : ["encoder0", "encoder1"],
 			"merge_mode" : "sum"
 
 		},
 		"encoder3": {
 			"lstm": true,
-			"layer": 0,
 			"peepholes" : false,
 			"bidirectional" : false,
+			"expected_input_size" : 512,
 			"hidden_size" : 512,
 			"dropout_keep_prob" : 1.0,
 			"init_forget_bias" : 0.0,
-			"input_layers" : [],
+			"input_layers" : ["encoder1", "encoder2"],
 			"merge_mode" : "sum"
 		},
 	}

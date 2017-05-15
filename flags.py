@@ -1,4 +1,6 @@
 import tensorflow as tf
+import os
+import sys
 
 
 tf.app.flags.DEFINE_float("max_clipped_gradient", 5.0,
@@ -92,6 +94,12 @@ tf.app.flags.DEFINE_integer("decoder_hidden_size", 512,
                             "Number of units in the hidden size of decoder LSTM layers. Bidirectional layers will therefore output 2*this")
 
 
+tf.app.flags.DEFINE_string("encoder_architecture_json", 'encoder_architecture.json',
+                            "The file name which stores the JSON architecture of the encoder")
+
+tf.app.flags.DEFINE_string("decoder_architecture_json", 'decoder_architecture.json',
+                            "The file name which stores the JSON architecture of the encoder")
+
 tf.app.flags.DEFINE_boolean("encoder_use_peepholes", False,
                             "Whether or not to use peephole (diagonal) connections on LSTMs in the encoder")
 tf.app.flags.DEFINE_boolean("decoder_use_peepholes", False,
@@ -121,3 +129,6 @@ def flag_test():
 
     assert f.num_buckets in [3], "Only 3 buckets are supported, for now, but you can easily change this. Just pass in bucket sizes."
     assert f.num_buckets * f.minimum_data_ratio_per_bucket < 1, "Product of the number of buckets (%d) and the data ratio per bucket (%f) must be less than 1" % (f.num_buckets, f.minimum_data_ratio_per_bucket)
+
+    assert os.path.isfile(f.encoder_architecture_json), "Invalid JSON file location passed for encoder architecture. Could not find %s" % f.encoder_architecture_json
+    #TODO - add decoder as well

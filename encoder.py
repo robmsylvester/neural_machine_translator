@@ -7,6 +7,7 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import variable_scope
+import json
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -19,8 +20,48 @@ def _create_encoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
     c = core_rnn_cell_impl.DropoutWrapper(c, output_keep_prob=dropout_keep_prob)
   return c
 
+def verify_encoder_architecture(encoder_json):
+  permitted_merge_modes = ['concat', 'sum']
 
-#TODO - modularize this from javascript
+  cur_layer = 0
+  output_sizes = {}
+  
+  #go one-by-one and make sure the architecture adds up
+  for layer_name, layer_parameters in encoder_json["layers"].iteritems():
+    
+    #merge mode is either concat or sum
+    assert layer_parameters["merge_mode"] in permitted_merge_modes, "Merge mode in %s is invalid" % layer_name
+
+    #no peephole connections on GRU's
+    if not layer_parameters["lstm"]:
+      assert not layer_parameters["peepholes"], "Cannot use peephole connections in layer %s because this is not an LSTM" % layer_name
+
+    #Forget bias and dropout probabilities are in 0-1 range
+    assert layer_parameters["init_forget_bias"] >= 0. and layer_parameters["init_forget_bias"] <= 1., "Forget bias for layer %s must be between 0-1" % layer_name
+    assert layer_parameters["dropout_keep_prob"] >= 0. and layer_parameters["dropout_keep_prob"] <= 1., "dropout_keep_prob for layer %s must be between 0-1" % layer_name
+
+    #store the output size for that layer. if bidirectional, store list with two copies of size so we can verify them later
+    output_sizes[layer_name] = [ layer_parameters['hidden_size'], layer_parameters['hidden_size'] ] if layer_parameters['bidirectional'] else [ layer_parameters['hidden_size'] ] 
+
+    #verify the dimensionality of the expected inputs at layer k equal the output dimensionalities from layer k-1 that connect via layer k's merge mode
+    if cur_layer == 0:
+      assert layer_parameters['expected_input_size'] == -1, "The expected_input_size of the first layer in the encoder must be -1. Instead it is %d" % layer_parameters['expected_input_size']
+      assert len(input_layers) == 0, "Input layers for first layer in the encoder must be an empty list"
+    else:
+      assert "TODO" == "TODO", "write out little lambda function to add up layer input sizes based on merge mode"
+
+    cur_layer += 1
+  
+
+def build_encoder_architecture_from_json(encoder_json):
+  pass
+
+
+def run_encoder_architecture(encoder_json):
+  pass
+
+
+#TODO - modularize this from javascript object and replace with the functions above
 def run_encoder(encoder_inputs,
             num_encoder_symbols,
             embedding_size,
