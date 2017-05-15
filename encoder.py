@@ -8,6 +8,8 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import variable_scope
 import json
+from collections import OrderedDict
+
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -46,16 +48,40 @@ def verify_encoder_architecture(encoder_json):
     #verify the dimensionality of the expected inputs at layer k equal the output dimensionalities from layer k-1 that connect via layer k's merge mode
     if cur_layer == 0:
       assert layer_parameters['expected_input_size'] == -1, "The expected_input_size of the first layer in the encoder must be -1. Instead it is %d" % layer_parameters['expected_input_size']
-      assert len(input_layers) == 0, "Input layers for first layer in the encoder must be an empty list"
+      assert len(layer_parameters['input_layers']) == 0, "Input layers for first layer in the encoder must be an empty list"
     else:
       assert "TODO" == "TODO", "write out little lambda function to add up layer input sizes based on merge mode"
+      assert len(layer_parameters['input_layers']) > 0, "Input layers for all layers other than the first in the encoder must be a list with >1 elements"
+      #assert they exist as keys
 
     cur_layer += 1
+
+  assert encoder_json["num_layers"] == cur_layer, "Num layer property does not equal the length of the encoder layers"
+
+  #TODO
+  return True or False
   
 
-def build_encoder_architecture_from_json(encoder_json):
-  pass
+def build_encoder_architecture_from_json(encoder_json_file_path):
+  with open(encoder_json_file_path, 'rb') as model_data:
+    try:
+      encoder_model = json.load(model_data, object_pairs_hook=OrderedDict)
+      print("Loaded JSON encoder model architecture from %s" % encoder_json_file_path)
+      print("This architecture will now be verified...")
 
+      if verify_encoder_architecture(encoder_model):
+        print("Valid encoder architecture")
+        return encoder_model #this is the JSON object parsed as a python dict
+      else:
+        print("Invalid encoder architecture")
+        return False
+
+    except ValueError, e:
+      print("Invalid json in %s" % encoder_json_file_path)
+      print(e)
+      raise
+
+  return False
 
 def run_encoder_architecture(encoder_json):
   pass
