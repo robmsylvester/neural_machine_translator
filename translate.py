@@ -62,6 +62,8 @@ def create_model(session, forward_only, buckets):
       FLAGS.learning_rate,
       FLAGS.learning_rate_decay_factor,
       FLAGS.minimum_learning_rate,
+      FLAGS.encoder_architecture_json,
+      FLAGS.decoder_architecture_json,
       forward_only=forward_only,
       dtype=dtype)
   ckpt = tf.train.get_checkpoint_state(FLAGS.data_dir)

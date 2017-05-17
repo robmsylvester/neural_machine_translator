@@ -7,9 +7,6 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import variable_scope
-import json
-from collections import OrderedDict
-
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -22,68 +19,38 @@ def _create_encoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
     c = core_rnn_cell_impl.DropoutWrapper(c, output_keep_prob=dropout_keep_prob)
   return c
 
-def verify_encoder_architecture(encoder_json):
-  permitted_merge_modes = ['concat', 'sum']
+def _create_encoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
+  raise NotImplementedError
 
-  cur_layer = 0
-  output_sizes = {}
-  
-  #go one-by-one and make sure the architecture adds up
+
+#TODO - this needs to become dynamic instead of static rnn's, probably. depending on timer calls. fuckin' padding.
+def run_encoder_NEW(encoder_json,
+                    encoder_inputs,
+                    num_encoder_symbols,
+                    embedding_size,
+                    dtype=None):
+
+
+  # embeddings need to become non-updated-by-backprop embeddings from unsupervised glove, word2vec, or fasttext options
+  embeddings = tf.get_variable("encoder_embeddings",
+                              shape=[num_encoder_symbols, embedding_size],
+                              initializer=tf.random_uniform_initializer(-1.0, 1.0),
+                              dtype=dtype)
+
+  #get the embedded inputs from the lookup table
+  embedded_encoder_inputs = tf.nn.embedding_lookup(embeddings, encoder_inputs)
+  current_layer = 0
+  cells = {}
+  outputs = {}
+
+  #TODO - this NEEDS to become dynamic rnn
   for layer_name, layer_parameters in encoder_json["layers"].iteritems():
-    
-    #merge mode is either concat or sum
-    assert layer_parameters["merge_mode"] in permitted_merge_modes, "Merge mode in %s is invalid" % layer_name
+    inputs = inputs or embedded_encoder_inputs
 
-    #no peephole connections on GRU's
-    if not layer_parameters["lstm"]:
-      assert not layer_parameters["peepholes"], "Cannot use peephole connections in layer %s because this is not an LSTM" % layer_name
+    #with variable_scope(layer_name, dtype=dtype) as scope:
+    #   create_encoder_cell(layer_parameters)
 
-    #Forget bias and dropout probabilities are in 0-1 range
-    assert layer_parameters["init_forget_bias"] >= 0. and layer_parameters["init_forget_bias"] <= 1., "Forget bias for layer %s must be between 0-1" % layer_name
-    assert layer_parameters["dropout_keep_prob"] >= 0. and layer_parameters["dropout_keep_prob"] <= 1., "dropout_keep_prob for layer %s must be between 0-1" % layer_name
-
-    #store the output size for that layer. if bidirectional, store list with two copies of size so we can verify them later
-    output_sizes[layer_name] = [ layer_parameters['hidden_size'], layer_parameters['hidden_size'] ] if layer_parameters['bidirectional'] else [ layer_parameters['hidden_size'] ] 
-
-    #verify the dimensionality of the expected inputs at layer k equal the output dimensionalities from layer k-1 that connect via layer k's merge mode
-    if cur_layer == 0:
-      assert layer_parameters['expected_input_size'] == -1, "The expected_input_size of the first layer in the encoder must be -1. Instead it is %d" % layer_parameters['expected_input_size']
-      assert len(layer_parameters['input_layers']) == 0, "Input layers for first layer in the encoder must be an empty list"
-    else:
-      assert "TODO" == "TODO", "write out little lambda function to add up layer input sizes based on merge mode"
-      assert len(layer_parameters['input_layers']) > 0, "Input layers for all layers other than the first in the encoder must be a list with >1 elements"
-      #assert they exist as keys
-
-    cur_layer += 1
-
-  assert encoder_json["num_layers"] == cur_layer, "Num layer property does not equal the length of the encoder layers"
-
-  #TODO
-  return True or False
-  
-
-def build_encoder_architecture_from_json(encoder_json_file_path):
-  with open(encoder_json_file_path, 'rb') as model_data:
-    try:
-      encoder_model = json.load(model_data, object_pairs_hook=OrderedDict)
-      print("Loaded JSON encoder model architecture from %s" % encoder_json_file_path)
-      print("This architecture will now be verified...")
-
-      if verify_encoder_architecture(encoder_model):
-        print("Valid encoder architecture")
-        return encoder_model #this is the JSON object parsed as a python dict
-      else:
-        print("Invalid encoder architecture")
-        return False
-
-    except ValueError, e:
-      print("Invalid json in %s" % encoder_json_file_path)
-      print(e)
-      raise
-
-  return False
-
-def run_encoder_architecture(encoder_json):
+    #current_layer += 1
   pass
 
 

@@ -52,7 +52,7 @@ tf.app.flags.DEFINE_integer("num_buckets", 3, "Will use this number to look up d
 
 
 #Learning Rate Flags
-tf.app.flags.DEFINE_float("learning_rate", 0.0271, "Learning rate.")
+tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
 #at 316,000 this was .0217
 
 tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
@@ -66,7 +66,7 @@ tf.app.flags.DEFINE_float("minimum_learning_rate", 0.005, "Minimum learning rate
 tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
                             "If True, loads training set into memory. Otherwise, reads batches by opening files and reading appropriate lines.")
 
-tf.app.flags.DEFINE_integer("max_train_data_size", 6000000,
+tf.app.flags.DEFINE_integer("max_train_data_size", 200000,
                             "Limit on the size of training data (0: no limit).")
 
 tf.app.flags.DEFINE_integer("train_offset", 0,
@@ -76,16 +76,16 @@ tf.app.flags.DEFINE_integer("train_offset", 0,
 
 
 #Embedding Flags for Encoder and Decoder
-#Was 1024
+#Was 1024, 512
 tf.app.flags.DEFINE_integer("encoder_embedding_size", 512,
                             "Number of units in the embedding size of the encoder inputs. This will be used in a wrapper to the first layer")
-#Was 1024
+#Was 1024, 512
 tf.app.flags.DEFINE_integer("decoder_embedding_size", 512,
                             "Number of units in the embedding size of the encoder inputs. This will be used in a wrapper to the first layer")
 #==========================================================================================
 
 
-#Was 1024
+#Was 1024, 512
 #LSTM Flags for Encoder and Decoder
 tf.app.flags.DEFINE_integer("encoder_hidden_size", 512,
                             "Number of units in the hidden size of encoder LSTM layers. Bidirectional layers will therefore output 2*this")

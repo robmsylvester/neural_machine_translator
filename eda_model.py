@@ -55,6 +55,8 @@ class EncoderDecoderAttentionModel(object):
                learning_rate,
                learning_rate_decay_factor,
                min_learning_rate,
+               encoder_json_path, #TODO - add headers for this
+               decoder_json_path,
                use_lstm=True,
                num_samples=512,
                forward_only=False,
@@ -89,14 +91,16 @@ class EncoderDecoderAttentionModel(object):
     self.minimum_learning_rate = tf.constant(min_learning_rate, dtype=tf.float32)
     self.learning_rate_decay_factor = tf.constant(learning_rate_decay_factor, dtype=tf.float32)
 
-
+    #TODO - add this to saver so it doesn't automatically restore at 0.5
     self.learning_rate = tf.Variable(
         float(learning_rate), trainable=True, dtype=dtype)
 
     self.learning_rate_decay_op = self.learning_rate.assign(
         tf.maximum(self.minimum_learning_rate, self.learning_rate * self.learning_rate_decay_factor, "learning_rate_decay"))
 
-
+    #Load the JSON architecture stacks for LSTMs/GRUs and verify them
+    self.encoder_architecture = model_utils.load_stack_architecture_from_json(encoder_json_path)
+    self.decoder_architecture = model_utils.load_stack_architecture_from_json(decoder_json_path)
 
     # If we use sampled softmax, we need an output projection.
     #output_projection = None
@@ -139,6 +143,8 @@ class EncoderDecoderAttentionModel(object):
       return model_utils.run_model(
           encoder_inputs,
           decoder_inputs,
+          self.encoder_architecture,
+          self.decoder_architecture,
           num_encoder_symbols=source_vocab_size,
           num_decoder_symbols=target_vocab_size,
           embedding_size=FLAGS.encoder_embedding_size,

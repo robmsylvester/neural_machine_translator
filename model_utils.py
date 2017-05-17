@@ -71,10 +71,10 @@ from tensorflow.python.ops import variable_scope
 #from tensorflow.contrib.rnn.python.ops import core_rnn
 import encoder
 import attention_decoder
+import json
+from collections import OrderedDict
 
 FLAGS = tf.app.flags.FLAGS
-
-
 
 def _create_output_projection(target_size,
                               output_size):
@@ -83,7 +83,7 @@ def _create_output_projection(target_size,
   #wrong size for the output
 
   #Notice we don't put this in a scope. It lives in the sequence model itself and gets passed between layers of the
-  #encoder and decoder. We return a transpose variable itself to speed up training so we don't have to do this back and
+  #decoder. We return a transpose variable itself to speed up training so we don't have to do this back and
   #forth between iterations. the weights transpose is necessary to pass to softmax. the weights themselves are used
   #to speak to the attention decoder.
   weights_t = tf.get_variable("output_projection_weights", [target_size, output_size], dtype=tf.float32)
@@ -92,13 +92,112 @@ def _create_output_projection(target_size,
   return (weights, biases, weights_t)
   
 
+def verify_recurrent_stack_architecture(stack_json):
+  permitted_input_merge_modes = ['concat', 'sum'] #when multiple layers connect to an LSTM/GRU, what do we do with these inputs? concat or sum, for now
+  permitted_unidirectional_output_merge_modes = [False] #when a unidirectional LSTM has outputs for each time step, we dont have anything special to do. This is just for readability
+  permitted_bidirectional_output_merge_modes = [False,'concat', 'sum']
+
+  cur_layer = 0
+  output_sizes = {}
+
+  # example structure for what output sizes looks like
+  # output_sizes = {
+  #   'encoder0' : [512,512],
+  #   'encoder1' : [512,512],
+  #   'encoder2' : [1024],
+  #   'encoder3' : [1024]
+  # }
+  
+  #go one-by-one and make sure the architecture adds up
+  for layer_name, layer_parameters in stack_json["layers"].iteritems():
+    
+    #merge mode is either concat or sum
+    assert layer_parameters["input_merge_mode"] in permitted_input_merge_modes, "Merge mode in %s is invalid" % layer_name
+
+    #no peephole connections on GRU's
+    if not layer_parameters["lstm"]:
+      assert not layer_parameters["peepholes"], "Cannot use peephole connections in layer %s because this is not an LSTM" % layer_name
+
+    #Forget bias and dropout probabilities are in 0-1 range
+    assert layer_parameters["init_forget_bias"] >= 0. and layer_parameters["init_forget_bias"] <= 1., "Forget bias for layer %s must be between 0-1" % layer_name
+    assert layer_parameters["dropout_keep_prob"] >= 0. and layer_parameters["dropout_keep_prob"] <= 1., "dropout_keep_prob for layer %s must be between 0-1" % layer_name
+
+    #verify that the output merge modes are either concat or sum or false if the layer is bidirectional, 
+    #and that it is false if it is unidirectional
+    #we also store the output sizes so that we can compare them to the input sizes in the next layer. notice that this requires
+    # taking a look at the merge modes.
+    #
+    if layer_parameters['bidirectional']:
+      if layer_parameters['output_merge_mode'] == False: #do nothing special to the bidirectional output, store it once for fw and once for bw
+        output_sizes[layer_name] = [ layer_parameters['hidden_size'], layer_parameters['hidden_size'] ]
+      elif layer_parameters['output_merge_mode'] == 'concat':
+        output_sizes[layer_name] = [ layer_parameters['hidden_size'] * 2 ]
+      elif layer_parameters['output_merge_mode'] == 'sum':
+        output_sizes[layer_name] = [ layer_parameters['hidden_size'] ]
+      else:
+        raise ValueError("For a bidirectional layer, your merge most be one of the following list:\n%s" % permitted_bidirectional_output_merge_modes)
+    else:
+      if layer_parameters['output_merge_mode'] == False:
+        output_sizes[layer_name] = [ layer_parameters['hidden_size'] ]
+      else:
+        raise ValueError("For a unidirectional layer, your merge most be one of the following list:\n%s" % permitted_unidirectional_output_merge_modes)
+
+    #verify the dimensionality of the expected inputs at layer k equal the output dimensionalities from layers 0->k-1 that connect to k following k's merge mode
+    if cur_layer == 0:
+      assert layer_parameters['expected_input_size'] == -1, "The expected_input_size of the first layer in the stack must be -1. Instead it is %d" % layer_parameters['expected_input_size']
+      assert len(layer_parameters['input_layers']) == 0, "Input layers for first layer in the stack must be an empty list"
+    else:
+      assert len(layer_parameters['input_layers']) > 0, "Input layers for all layers other than the first in the stack must be a list with >1 elements"
+      
+      #list off all the output sizes that will connect to this layer
+      #print("Analyzing the inputs into layer %d, which expect an input size of %d" % (cur_layer, layer_parameters['expected_input_size']))
+      connected_layer_sizes = []
+      for l_name in layer_parameters['input_layers']:
+        for sz in output_sizes[l_name]:
+          connected_layer_sizes.append(sz) 
+      #print("Connected layers to layer %d have sizes %s" % (cur_layer, str(connected_layer_sizes)))
+
+      #verify the sum/concatenation of these layer sizes is equal to the expected input size
+      if layer_parameters['input_merge_mode'] == 'sum':
+        assert len(set(connected_layer_sizes)) == 1, "If using an elementwise summation of outputs from multiple layers, all layers need to output the same size. Instead, input sizes are %s" % (str(connected_layer_sizes))
+        assert connected_layer_sizes[0] == layer_parameters['expected_input_size'], "Layer %s expected input size of %d differs from actual input size of %d" % (layer_name, layer_parameters['expected_input_size'], connected_layer_sizes[0])
+      elif layer_parameters['input_merge_mode'] == 'concat':
+        sum_connected_layers = sum(connected_layer_sizes)
+        assert sum_connected_layers == layer_parameters['expected_input_size'], "Layer %s expected input size of %d differs from actual input size of %d" % (layer_name, layer_parameters['expected_input_size'], sum_connected_layers)
+
+    cur_layer += 1
+
+  return True
+  
+
+def load_stack_architecture_from_json(json_file_path):
+  with open(json_file_path, 'rb') as model_data:
+    try:
+      stack_model = json.load(model_data, object_pairs_hook=OrderedDict)
+      print("Loaded JSON model architecture from %s" % json_file_path)
+      print("This architecture will now be verified...")
+
+      if verify_recurrent_stack_architecture(stack_model):
+        print("Valid stack model architecture")
+        return stack_model #this is the JSON object parsed as a python dict
+
+    except ValueError, e:
+      print("Invalid json in %s" % json_file_path)
+      print(e)
+      raise
+
+  return False
 
 
+def run_json_stack_architecture(model_json):
+  pass
 
 
 #TODO - eventually embeddings will be initialized with pre-trained FastText (on the dataset? full pretrained?)...seems like high overfitting potential, and sort of cheating...so make it a flag option.
 def run_model(encoder_inputs,
               decoder_inputs,
+              encoder_architecture,
+              decoder_architecture,
               num_encoder_symbols,
               num_decoder_symbols,
               embedding_size,
