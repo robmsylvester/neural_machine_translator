@@ -212,11 +212,26 @@ def run_model(encoder_inputs,
   with variable_scope.variable_scope(scope or "model", dtype=dtype) as scope:
     dtype=scope.dtype
 
-    #First, we run the encoder on the inputs, which for now included the embedding transformation to the input before entering the rnn
-    encoder_outputs, encoder_state = encoder.run_encoder(encoder_inputs,
-                                            num_encoder_symbols,
-                                            embedding_size,
-                                            dtype=dtype)
+    #TODO - this is where the embedded decoder inputs should be extracted
+    # why? because they might be pre-trained glove/word2vec/fasttext embeddings that aren't trained by the network
+    #    BUT
+    #      then they are still in memory for each bucket. can probably do better and abstract it into the argument
+    #      to run_model()
+
+    #First, we run the encoder on the inputs, which for now included the embedding transformation to the input 
+    #before entering the rnn. this returns an encoder state which is an LSTMStateTuple
+    #encoder_outputs, encoder_state = encoder.run_encoder(encoder_inputs,
+    #                                        num_encoder_symbols,
+    #                                        embedding_size,
+    #                                        dtype=dtype)
+
+    encoder_outputs, encoder_state = encoder.run_encoder_NEW(encoder_architecture,
+                                        encoder_inputs,
+                                        num_encoder_symbols,
+                                        embedding_size,
+                                        dtype=dtype)
+
+
 
     #Then we create an attention state by reshaping the encoder outputs. This amounts to creating an additional
     #dimension, namely attention_length, so that our attention states are of shape [batch_size, atten_len=1, atten_size=size of last lstm output]
@@ -226,7 +241,7 @@ def run_model(encoder_inputs,
     #then we run the decoder.
     return attention_decoder.embedding_attention_decoder(
           decoder_inputs,
-          encoder_state,
+          encoder_state, #this is an LSTMStateTuple
           attention_states,
           num_decoder_symbols,
           embedding_size,
@@ -235,7 +250,6 @@ def run_model(encoder_inputs,
           output_projection=output_projection,
           feed_previous=feed_previous,
           initial_state_attention=initial_state_attention)
-
 
 
 def sequence_loss_by_example(logits,

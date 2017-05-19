@@ -35,7 +35,6 @@ def _create_encoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
 def _create_encoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
   raise NotImplementedError
 
-
 #TODO - this needs to become dynamic instead of static rnn's, probably. depending on timer calls. fuckin' padding.
 def run_encoder_NEW(encoder_json,
                     encoder_inputs,
@@ -59,10 +58,12 @@ def run_encoder_NEW(encoder_json,
       embedded_encoder_inputs = tf.nn.embedding_lookup(embeddings, encoder_inputs)
 
     current_layer = 0
-    cell_outputs_states = {} #indexed by layer name in json, which stores a dict with keys "output" and "state"
+    cell_outputs = {} #indexed by layer name in json, which stores a dict with keys "output" and "state"
 
     #TODO - this NEEDS to become dynamic rnn
+    #TODO - this is potentially buggy with a dict and iterating items. make sure order is always right from ordered dict collections call
     for layer_name, layer_parameters in encoder_json["layers"].iteritems():
+      print("encoder is analyzing layer %s" % layer_name)
 
       #cell outputs and states are created. if unidirectional gru or lstm, out is still a list.
       #if bidirectional, it is a list of two tensors, unless they are concatenated
@@ -74,19 +75,33 @@ def run_encoder_NEW(encoder_json,
 
       #add to inputs the residual connections that connect to this layer
       for candidate_layer_name, candidate_layer_output in cell_outputs.iteritems():
+        print("layer %s is checking layer %s for inputs" %  (layer_name, candidate_layer_name))
         if candidate_layer_name == layer_name: #layers don't have residual connections to themselves...
+          print("skipping")
           continue
-        elif candidate_layer_name in layer_parameters['input_layers'] #we will gather the layers that are marked in the architecture
-          print("Layer %s will use input from layer %s" % (layer_name, candidate_layer_name))
-          input_list.append(candidate_layer_output)
+        elif candidate_layer_name in layer_parameters['input_layers']: #we will gather the layers that are marked in the architecture
+          print("layer %s will use input from layer %s" % (layer_name, candidate_layer_name))
+          for output_tensor in candidate_layer_output: #candidate_layer_output is always a list, sometimes with 1 element, sometimes with 2
+            input_list.append(output_tensor)
 
       if len(input_list) == 0:
         print("layer %s has no inputs in the input list. it will use the embeddings" % layer_name)
         inputs = embedded_encoder_inputs
 
+      print("layer %s has %d total inputs in the input list." % (layer_name, len(input_list)))
+
       #combine these residual inputs following this layer's merge mode
       if layer_parameters['input_merge_mode'] == 'concat':
+
+        "LEFT OFF HERE, FIRST LAYER CANNOT HAVE INPUT MERGE MODE"
+
+        print("going to concatenate inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(input_list[0].get_shape())))
+        inputs = tf.concat([i for i in input_list], axis=1) #need to unstack here? correct dimension?
+        print("the shape of the inputs after concatenating is %s" % str(inputs.get_shape()))
       elif layer_parameters['input_merge_mode'] == 'sum':
+        inputs = tf.unstack(tf.add_n([i for i in input_list], axis=1)) #TODO - correct here
+        print("going to sum inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(input_list[0].get_shape())))
+        print("the shape of the inputs after summing is %s" % str(inputs.get_shape()))
       else:
         raise ValueError("Only concat and sum are built for input merge modes in the runtime encoder stack loop, so far...")
 
@@ -104,29 +119,41 @@ def run_encoder_NEW(encoder_json,
         #they will be a list with 2 elements, the forward and backward outputs. or, a list with one element, the concatenation or sum of the 2 elements.
         if layer_parameters['output_merge_mode'] == 'concat':
           assert out_f.get_shape().ndims == 2
-          cell_outputs_states[layer_name].append(tf.concat([out_f, out_b], axis=1)) #TODO - need to unstack here?
+          cell_outputs[layer_name].append(tf.concat([out_f, out_b], axis=1)) #TODO - need to unstack here?
         elif layer_parameters['output_merge_mode'] == 'sum':
-          cell_outputs_states[layer_name].append(tf.unstack(tf.add_n([out_f, out_b]))) #TODO - need to unstack here?
+          assert out_f.get_shape().ndims == 2
+          cell_outputs[layer_name].append(tf.unstack(tf.add_n([out_f, out_b]))) #TODO - need to unstack here?
         else:
-          cell_outputs_states[layer_name].append(out_f)
-          cell_outputs_states[layer_name].append(out_b)
+          cell_outputs[layer_name].append(out_f)
+          cell_outputs[layer_name].append(out_b)
+        stack_state = [state_f, state_b]
 
       else:
         cf = _create_encoder_cell(layer_parameters)
         out_f, state_f = core_rnn.static_rnn(cf, inputs, dtype=dtype)
-        cell_outputs_states[layer_name]["out"].append(out_f)
+        cell_outputs[layer_name]["out"].append(out_f)
+        stack_state = [state_f]
 
-      #we do care about the states, but only the top most state, which is what is stored in state_f
+    #end main loop
+    #we do care about the states, but only the top most state, which is what is stored in state_f unless it is bidirectional
+    #state tuples are now stored as (cell_state, hidden_state)
+    if len(stack_state) == 2:
+      assert type(stack_state[0]) is core_rnn_cell_impl.LSTMStateTuple, "top-level forward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
+      assert type(stack_state[1]) is core_rnn_cell_impl.LSTMStateTuple, "top-level backward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
+      stack_state = tf.concat(stack_state, axis=1) #concatenate the bidirectional states
+    elif len(stack_state) == 1:
+      assert type(stack_state[0]) is core_rnn_cell_impl.LSTMStateTuple, "top-level forward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
+      stack_state = stack_state[0]
 
+    #we do care about the outputs, but they might be bidirectional outputs too, so we must check that as well
+    #for now, we will just concatenate these by default
+    if len(cell_outputs[layer_name]) == 2:
+      print("the top level layer of your stack is bidirectional. you should specify in the json architecture to use an output merge mode of either concat or sum for this layer. defaulting to concat")
+      stack_outputs = tf.concat(cell_outputs[layer_name], axis=1) #check this axis
+    elif len(cell_outputs[layer_name]) == 1:
+      stack_outputs = cell_outputs[layer_name][0]
 
-
-
-    #with variable_scope(layer_name, dtype=dtype) as scope:
-    #   create_encoder_cell(layer_parameters)
-
-    #current_layer += 1
-    pass
-
+    return stack_outputs, stack_state
 
 #TODO - modularize this from javascript object and replace with the functions above
 def run_encoder(encoder_inputs,
@@ -204,6 +231,10 @@ def run_encoder(encoder_inputs,
     
     #Make sure everything went alright
     #TODO - turn these OFF when not testing to speed things up.
+    print("encoder is returning encoder outputs which has len %d " % len(encoder_outputs))
+    print("encoder output tensors have shape %s " % str(encoder_outputs[0].get_shape()))
+    print("encoder state cell state tensor has shape %s " % str(encoder_state[0].get_shape()))
+    print("encoder state hidden state tensor has shape %s " % str(encoder_state[1].get_shape()))
     assert type(encoder_state) is core_rnn_cell_impl.LSTMStateTuple, "encoder_state should be an LSTMStateTuple. state is tuple is now true by default in TF."
     assert len(encoder_outputs) == len(encoder_inputs), "encoder input length (%d) should equal encoder output length(%d)" % (len(encoder_inputs), len(encoder_outputs))
     return encoder_outputs, encoder_state
@@ -217,6 +248,10 @@ def get_attention_state_from_encoder_outputs(encoder_outputs,
                                             dtype=None):
   with variable_scope.variable_scope(scope or "attention_from_encoder_outputs", dtype=dtype) as scope:
     dtype=scope.dtype
+    print("get attention state from encoder outputs has been called.")
     top_states = [array_ops.reshape(enc_out, [-1, 1, FLAGS.encoder_hidden_size]) for enc_out in encoder_outputs]
+    print("top states has a total of %d tensors" % len(top_states))
+    print("the first of these tensors has shape %s" % str(top_states[0].get_shape()))
     attention_states = array_ops.concat(top_states, 1)
+    print("after concatenating, the attention states are shape %s" % str(attention_states.get_shape()))
     return attention_states 

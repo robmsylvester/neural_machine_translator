@@ -100,7 +100,8 @@ class EncoderDecoderAttentionModel(object):
 
     #Load the JSON architecture stacks for LSTMs/GRUs and verify them
     self.encoder_architecture = model_utils.load_stack_architecture_from_json(encoder_json_path)
-    self.decoder_architecture = model_utils.load_stack_architecture_from_json(decoder_json_path)
+    self.decoder_architecture = "TODO"
+    #self.decoder_architecture = model_utils.load_stack_architecture_from_json(decoder_json_path)
 
     # If we use sampled softmax, we need an output projection.
     #output_projection = None

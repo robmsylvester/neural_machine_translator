@@ -359,7 +359,7 @@ def attention_decoder(decoder_inputs,
     outputs = []
     prev = None
     num_decoder_layers = 4
-    hidden_states = [initial_state for _ in xrange(num_decoder_layers)]
+    hidden_states = [initial_state for _ in xrange(num_decoder_layers)] #LSTM State Tuples
 
     #we need to store the batch size of the decoder inputs to use later for reshaping.
     # because these come in as a list of tensors, just take the first one.
@@ -416,6 +416,8 @@ def attention_decoder(decoder_inputs,
                                                               hidden_states,
                                                               num_layers=num_decoder_layers)
       decoder_state = hidden_states[-1]
+
+      print("the decoder state after running the LSTM decoder stack is of type %s" % type(decoder_state))
 
       #print("The shape of the final decoder state that will be passed to the attention mechanism is" + str(decoder_state.get_shape()))
 
@@ -517,6 +519,11 @@ def embedding_attention_decoder(decoder_inputs,
   #print(type(output_projection[0]))
   #print(type(output_projection[1]))
   #print("var scope of w_t from custom contrib is " + str(output_projection[0].get_variable_scope().name))
+
+  print("reached embedding attention decoder")
+  print("the initial cell state for this attention decoder is the encoder state from the last run of the encoder, which as shape %s" % str(initial_state[0].get_shape()))
+  print("the initial hidden state for this attention decoder is the encoder state from the last run of the encoder, which as shape %s" % str(initial_state[1].get_shape()))
+  print("the reshaped attention states from the encoder outputs have shape %s" % str(attention_states.get_shape()))
 
   if output_projection is not None:
     proj_biases = ops.convert_to_tensor(output_projection[1], dtype=dtype)
