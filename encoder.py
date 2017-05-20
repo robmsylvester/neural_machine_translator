@@ -7,7 +7,7 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import variable_scope
-
+from collections import OrderedDict
 FLAGS = tf.app.flags.FLAGS
 
 def _create_encoder_cell(json_layer_parameters):
@@ -47,6 +47,8 @@ def run_encoder_NEW(encoder_json,
   with variable_scope.variable_scope("encoder", dtype=dtype) as scope:
     dtype=scope.dtype
 
+    print("encoder inputs right now have length of %d and each has shape %s" % (len(encoder_inputs), str(encoder_inputs[0].get_shape())))
+
     #create embeddings - this will eventually be moved elsewhere when the embeddings are no longer trained
     with variable_scope.variable_scope("embeddings") as scope:
       embeddings = tf.get_variable("encoder_embeddings",
@@ -57,82 +59,96 @@ def run_encoder_NEW(encoder_json,
       #get the embedded inputs from the lookup table
       embedded_encoder_inputs = tf.nn.embedding_lookup(embeddings, encoder_inputs)
 
+      #these embedded inputs came in as a list so they will be of the shape (bucket_size, batch_size, embed_size), but we need
+      # them to be a sequence input for the lstm layers, so we reshape them back into a list of length bucket_size containing tensors of shape (batch_size, embed_size)
+      embedded_encoder_inputs = tf.unstack(embedded_encoder_inputs)
+
+    print("the embedded encoder inputs, after the thick, hot embedding lookup, transformed these inputs into the shape %s" % str(embedded_encoder_inputs[0].get_shape()))
+    print(len(embedded_encoder_inputs))
+
     current_layer = 0
-    cell_outputs = {} #indexed by layer name in json, which stores a dict with keys "output" and "state"
+    cell_outputs = OrderedDict() #indexed by layer name in json, which stores a dict with keys "output" and "state"
 
     #TODO - this NEEDS to become dynamic rnn
-    #TODO - this is potentially buggy with a dict and iterating items. make sure order is always right from ordered dict collections call
+    #TODO - this is potentially buggy with a dict and iterating items. make this an ordered dict too from a layer up
     for layer_name, layer_parameters in encoder_json["layers"].iteritems():
       print("encoder is analyzing layer %s" % layer_name)
 
-      #cell outputs and states are created. if unidirectional gru or lstm, out is still a list.
-      #if bidirectional, it is a list of two tensors, unless they are concatenated
-      cell_outputs[layer_name] = []
+      with variable_scope.variable_scope(layer_name) as scope:
+        #cell outputs and states are created. if unidirectional gru or lstm, out is still a list.
+        #if bidirectional, it is a list of two tensors, unless they are concatenated
+        cell_outputs[layer_name] = []
 
-      #TODO, take this and the loop and refactor into a get_inputs function
-      #first loop will get embeddings, later loops will use previous iteration outputs, plus any residual connections
-      input_list = []
+        #TODO, take this and the loop and refactor into a get_inputs function
+        #first loop will get embeddings, later loops will use previous iteration outputs, plus any residual connections
+        input_list = []
 
-      #add to inputs the residual connections that connect to this layer
-      for candidate_layer_name, candidate_layer_output in cell_outputs.iteritems():
-        print("layer %s is checking layer %s for inputs" %  (layer_name, candidate_layer_name))
-        if candidate_layer_name == layer_name: #layers don't have residual connections to themselves...
-          print("skipping")
-          continue
-        elif candidate_layer_name in layer_parameters['input_layers']: #we will gather the layers that are marked in the architecture
-          print("layer %s will use input from layer %s" % (layer_name, candidate_layer_name))
-          for output_tensor in candidate_layer_output: #candidate_layer_output is always a list, sometimes with 1 element, sometimes with 2
-            input_list.append(output_tensor)
+        #add to inputs the residual connections that connect to this layer
+        for candidate_layer_name, candidate_layer_output in cell_outputs.iteritems():
+          print("layer %s is checking layer %s for inputs" %  (layer_name, candidate_layer_name))
+          if candidate_layer_name == layer_name: #layers don't have residual connections to themselves...
+            print("skipping")
+            continue
+          elif candidate_layer_name in layer_parameters['input_layers']: #we will gather the layers that are marked in the architecture
+            print("layer %s will use input from layer %s" % (layer_name, candidate_layer_name))
+            for output_tensor in candidate_layer_output: #candidate_layer_output is always a list, sometimes with 1 element, sometimes with 2
+              input_list.append(output_tensor)
 
-      if len(input_list) == 0:
-        print("layer %s has no inputs in the input list. it will use the embeddings" % layer_name)
-        inputs = embedded_encoder_inputs
+        print("layer %s has %d total inputs in the input list." % (layer_name, len(input_list)))
 
-      print("layer %s has %d total inputs in the input list." % (layer_name, len(input_list)))
-
-      #combine these residual inputs following this layer's merge mode
-      if layer_parameters['input_merge_mode'] == 'concat':
-
-        "LEFT OFF HERE, FIRST LAYER CANNOT HAVE INPUT MERGE MODE"
-
-        print("going to concatenate inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(input_list[0].get_shape())))
-        inputs = tf.concat([i for i in input_list], axis=1) #need to unstack here? correct dimension?
-        print("the shape of the inputs after concatenating is %s" % str(inputs.get_shape()))
-      elif layer_parameters['input_merge_mode'] == 'sum':
-        inputs = tf.unstack(tf.add_n([i for i in input_list], axis=1)) #TODO - correct here
-        print("going to sum inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(input_list[0].get_shape())))
-        print("the shape of the inputs after summing is %s" % str(inputs.get_shape()))
-      else:
-        raise ValueError("Only concat and sum are built for input merge modes in the runtime encoder stack loop, so far...")
-
-      #create/get the cells, and run them
-      #this will give us the outputs, and we can combine them as necessary
-      #c stands for cell, out for outputs, f for forward, b for backward
-      if layer_parameters['bidirectional']:
-        cf = _create_encoder_cell(layer_parameters)
-        cb = _create_encoder_cell(layer_parameters)
-
-        out_fb, out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf, cb, inputs, dtype=dtype)
-        print("shape of out_forward for layer %s is %s " % (layer_name, str(out_f.get_shape())))
-
-        #store the outputs according to how they have to be merged.
-        #they will be a list with 2 elements, the forward and backward outputs. or, a list with one element, the concatenation or sum of the 2 elements.
-        if layer_parameters['output_merge_mode'] == 'concat':
-          assert out_f.get_shape().ndims == 2
-          cell_outputs[layer_name].append(tf.concat([out_f, out_b], axis=1)) #TODO - need to unstack here?
-        elif layer_parameters['output_merge_mode'] == 'sum':
-          assert out_f.get_shape().ndims == 2
-          cell_outputs[layer_name].append(tf.unstack(tf.add_n([out_f, out_b]))) #TODO - need to unstack here?
+        #combine these residual inputs following this layer's merge mode
+        if layer_parameters['input_merge_mode'] == 'concat':
+          print("going to concatenate inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(input_list[0].get_shape())))
+          #inputs = tf.concat([i for i in input_list], axis=1) #need to unstack here? correct dimension?
+          #inputs = tf.cond(len(input_list) > 1,
+          #  lambda:tf.concat(input_list, axis=1),
+          #  lambda:input_list[0])
+          inputs = tf.concat(input_list, axis=1)
+          print("the shape of the inputs after concatenating is %s" % str(inputs.get_shape()))
+        elif layer_parameters['input_merge_mode'] == 'sum':
+          #inputs = tf.unstack(tf.add_n([i for i in input_list])) #TODO - correct here? unstack check
+          #inputs = tf.cond(len(input_list) > 1,
+          #  lambda:tf.unstack(tf.add_n(input_list)),
+          #  lambda:input_list[0])
+          inputs = tf.unstack(tf.add_n(input_list))
+          print("going to sum inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(inputs[0].get_shape())))
+          print("the shape of the inputs after summing is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
         else:
-          cell_outputs[layer_name].append(out_f)
-          cell_outputs[layer_name].append(out_b)
-        stack_state = [state_f, state_b]
+          assert current_layer==0, "The input merge mode must be concat or sum for all other layers but 0" #remove this text
+          assert len(input_list)==0, "The current layer should be layer 0 if there are no inputs from other layers" #remove this test
+          inputs = embedded_encoder_inputs
 
-      else:
-        cf = _create_encoder_cell(layer_parameters)
-        out_f, state_f = core_rnn.static_rnn(cf, inputs, dtype=dtype)
-        cell_outputs[layer_name]["out"].append(out_f)
-        stack_state = [state_f]
+
+        print("About to run the network layer. Inputs have shape %s and length %d" % (str(inputs[0].get_shape()), len(inputs)))
+        #create/get the cells, and run them
+        #this will give us the outputs, and we can combine them as necessary
+        #c stands for cell, out for outputs, f for forward, b for backward
+        if layer_parameters['bidirectional']:
+          cf = _create_encoder_cell(layer_parameters)
+          cb = _create_encoder_cell(layer_parameters)
+          out_fb, out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf, cb, inputs, dtype=dtype)
+          #print("shape of out_forward for layer %s is %s " % (layer_name, str(out_f.get_shape())))
+
+          #store the outputs according to how they have to be merged.
+          #they will be a list with 2 elements, the forward and backward outputs. or, a list with one element, the concatenation or sum of the 2 elements.
+          if layer_parameters['output_merge_mode'] == 'concat':
+            assert out_f[0].get_shape().ndims == 2
+            cell_outputs[layer_name].append(out_fb)
+          elif layer_parameters['output_merge_mode'] == 'sum':
+            assert out_f[0].get_shape().ndims == 2
+            cell_outputs[layer_name].append(tf.unstack(tf.add_n([out_f, out_b]))) #unstack recreates a list of length bucket_length of tensors with shape (batch_size, hidden_size)
+          else:
+            cell_outputs[layer_name].append(out_f)
+            cell_outputs[layer_name].append(out_b)
+          stack_state = [state_f, state_b]
+
+        else:
+          cf = _create_encoder_cell(layer_parameters)
+          out_f, state_f = core_rnn.static_rnn(cf, inputs, dtype=dtype)
+          cell_outputs[layer_name]["out"].append(out_f)
+          stack_state = [state_f]
+
+      current_layer += 1
 
     #end main loop
     #we do care about the states, but only the top most state, which is what is stored in state_f unless it is bidirectional
@@ -160,6 +176,9 @@ def run_encoder(encoder_inputs,
             num_encoder_symbols,
             embedding_size,
             dtype=None):
+
+  print("length of encoder inputs is %d" % len(encoder_inputs))
+  print("shape of encoder input 0 is %s" % str(encoder_inputs[0].get_shape()))
 
   with variable_scope.variable_scope("encoder", dtype=dtype) as scope:
     dtype = scope.dtype

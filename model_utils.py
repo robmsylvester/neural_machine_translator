@@ -93,9 +93,9 @@ def _create_output_projection(target_size,
   
 
 def verify_recurrent_stack_architecture(stack_json):
-  permitted_input_merge_modes = ['concat', 'sum'] #when multiple layers connect to an LSTM/GRU, what do we do with these inputs? concat or sum, for now
+  permitted_input_merge_modes = [False,'concat','sum'] #when multiple layers connect to an LSTM/GRU, what do we do with these inputs? concat or sum, for now
   permitted_unidirectional_output_merge_modes = [False] #when a unidirectional LSTM has outputs for each time step, we dont have anything special to do. This is just for readability
-  permitted_bidirectional_output_merge_modes = [False,'concat', 'sum']
+  permitted_bidirectional_output_merge_modes = [False,'concat','sum']
 
   cur_layer = 0
   output_sizes = {}
@@ -110,6 +110,9 @@ def verify_recurrent_stack_architecture(stack_json):
   
   #go one-by-one and make sure the architecture adds up
   for layer_name, layer_parameters in stack_json["layers"].iteritems():
+
+    if cur_layer == 0:
+      assert layer_parameters["input_merge_mode"] == False, "Input merge mode for first layer must be False"
     
     #merge mode is either concat or sum
     assert layer_parameters["input_merge_mode"] in permitted_input_merge_modes, "Merge mode in %s is invalid" % layer_name

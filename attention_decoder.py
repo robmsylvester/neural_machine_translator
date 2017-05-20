@@ -189,7 +189,7 @@ def run_attention_mechanism(query_state, reshaped_attention_states, hidden_atten
 
   #let's verify that the cell state and the hidden state are the same size and the proper number of dimensions
   assert query_state[0].get_shape().ndims == query_state[1].get_shape().ndims == 2, "Cell state and hidden state of lstm state tuple need a dimensionality of two. (batch_size, cell size)"
-  assert query_state[0].get_shape()[1] == query_state[1].get_shape()[1], "Cell state and hidden state of lstm tuple need to be the same shape."
+  assert query_state[0].get_shape()[0] == query_state[1].get_shape()[1], "Cell state and hidden state of lstm tuple need to be the same shape."
   assert len(hidden_attention_states) == num_attention_heads, "There must be the same number of calculated hidden attention states from the 1x1 convolution as there are number of attention heads."
 
   #now we concatenate the two states of the lstm across the second dimension (the one that is not the batch size) 
@@ -405,8 +405,6 @@ def attention_decoder(decoder_inputs,
         raise ValueError("Could not infer input size from input: %s" % inp.name)
       attentive_input = linear([inp] + attns, input_size, True)
 
-
-
       #initialize the hidden states of the network if i==0
 
       #print("about to call decoder_rnn. current scope is %s" % scope.name)
@@ -415,9 +413,11 @@ def attention_decoder(decoder_inputs,
       decoder_output, hidden_states, output_size = decoder_rnn(attentive_input,
                                                               hidden_states,
                                                               num_layers=num_decoder_layers)
-      decoder_state = hidden_states[-1]
+      decoder_state = hidden_states[-1] #still decoder state  will be an LSTMStateTuple
 
-      print("the decoder state after running the LSTM decoder stack is of type %s" % type(decoder_state))
+
+
+      #print("the decoder state after running the LSTM decoder stack is of type %s" % type(decoder_state))
 
       #print("The shape of the final decoder state that will be passed to the attention mechanism is" + str(decoder_state.get_shape()))
 
