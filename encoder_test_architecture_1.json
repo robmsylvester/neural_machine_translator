@@ -1,0 +1,102 @@
+{
+	"num_layers": 8,
+	"layer_order_deprecated" : ["encoder0", "encoder1", "encoder2"],
+	"layers": {
+		"encoder0": {
+			"lstm": true,
+			"peepholes" : false,
+			"bidirectional" : true,
+			"expected_input_size" : -1,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : [],
+			"output_merge_mode" : "concat",
+			"input_merge_mode" : false
+		},
+		"encoder1": {
+			"lstm": true,
+			"peepholes" : false,
+			"bidirectional" : true,
+			"expected_input_size" : 1024,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : ["encoder0"],
+			"output_merge_mode" : "concat",
+			"input_merge_mode" : "concat"
+		},
+		"encoder2": {
+			"lstm": true,
+			"peepholes" : false,
+			"bidirectional" : false,
+			"expected_input_size" : 512,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : ["encoder1"],
+			"output_merge_mode" : false,
+			"input_merge_mode" : "concat"
+		},
+		"encoder3": {
+			"lstm": true,
+			"peepholes" : false,
+			"bidirectional" : false,
+			"expected_input_size" : -1,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : ["encoder2"],
+			"output_merge_mode" : false,
+			"input_merge_mode" : false
+		},
+		"encoder4": {
+			"lstm": true,
+			"peepholes" : false,
+			"bidirectional" : false,
+			"expected_input_size" : 512,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : ["encoder2, encoder3"],
+			"output_merge_mode" : false,
+			"input_merge_mode" : "sum"
+		},
+		"encoder5": {
+			"lstm": true,
+			"peepholes" : false,
+			"bidirectional" : false,
+			"expected_input_size" : 512,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : ["encoder3", "encoder4"],
+			"output_merge_mode" : false,
+			"input_merge_mode" : "sum"
+		},
+		"encoder6": {
+			"lstm": true,
+			"peepholes" : false,
+			"bidirectional" : false,
+			"expected_input_size" : -1,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : ["encoder4", "encoder5"],
+			"output_merge_mode" : false,
+			"input_merge_mode" : "sum"
+		},
+		"encoder7": {
+			"lstm": true,
+			"peepholes" : false,
+			"bidirectional" : false,
+			"expected_input_size" : 1024,
+			"hidden_size" : 512,
+			"dropout_keep_prob" : 1.0,
+			"init_forget_bias" : 0.0,
+			"input_layers" : ["encoder5", "encoder6"],
+			"output_merge_mode" : false,
+			"input_merge_mode" : "sum"
+		}
+	}
+}

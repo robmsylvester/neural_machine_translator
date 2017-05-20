@@ -91,20 +91,18 @@ def run_encoder_NEW(encoder_json,
             continue
           elif candidate_layer_name in layer_parameters['input_layers']: #we will gather the layers that are marked in the architecture
             print("layer %s will use input from layer %s" % (layer_name, candidate_layer_name))
-            for output_tensor in candidate_layer_output: #candidate_layer_output is always a list, sometimes with 1 element, sometimes with 2
-              input_list.append(output_tensor)
+            for layer_output in candidate_layer_output: #candidate_layer_output is always a list, sometimes with 1 element, sometimes with 2
+              input_list.append(layer_output)
 
         print("layer %s has %d total inputs in the input list." % (layer_name, len(input_list)))
 
         #combine these residual inputs following this layer's merge mode
         if layer_parameters['input_merge_mode'] == 'concat':
-          print("going to concatenate inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(input_list[0].get_shape())))
-          #inputs = tf.concat([i for i in input_list], axis=1) #need to unstack here? correct dimension?
           #inputs = tf.cond(len(input_list) > 1,
           #  lambda:tf.concat(input_list, axis=1),
           #  lambda:input_list[0])
-          inputs = tf.concat(input_list, axis=1)
-          print("the shape of the inputs after concatenating is %s" % str(inputs.get_shape()))
+          inputs = tf.unstack(tf.concat(input_list, axis=1)) #we unstack to get a list
+          print("the shape of the inputs after concatenating is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
         elif layer_parameters['input_merge_mode'] == 'sum':
           #inputs = tf.unstack(tf.add_n([i for i in input_list])) #TODO - correct here? unstack check
           #inputs = tf.cond(len(input_list) > 1,
@@ -131,11 +129,13 @@ def run_encoder_NEW(encoder_json,
 
           #store the outputs according to how they have to be merged.
           #they will be a list with 2 elements, the forward and backward outputs. or, a list with one element, the concatenation or sum of the 2 elements.
+          
+          #if wondering why not place this in a tf.cond function? because model shouldn't ever dynamically change. if it did, would need something better
           if layer_parameters['output_merge_mode'] == 'concat':
-            assert out_f[0].get_shape().ndims == 2
+            #assert out_f[0].get_shape().ndims == 2
             cell_outputs[layer_name].append(out_fb)
           elif layer_parameters['output_merge_mode'] == 'sum':
-            assert out_f[0].get_shape().ndims == 2
+            #assert out_f[0].get_shape().ndims == 2
             cell_outputs[layer_name].append(tf.unstack(tf.add_n([out_f, out_b]))) #unstack recreates a list of length bucket_length of tensors with shape (batch_size, hidden_size)
           else:
             cell_outputs[layer_name].append(out_f)
@@ -145,7 +145,7 @@ def run_encoder_NEW(encoder_json,
         else:
           cf = _create_encoder_cell(layer_parameters)
           out_f, state_f = core_rnn.static_rnn(cf, inputs, dtype=dtype)
-          cell_outputs[layer_name]["out"].append(out_f)
+          cell_outputs[layer_name].append(out_f)
           stack_state = [state_f]
 
       current_layer += 1

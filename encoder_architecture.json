@@ -18,13 +18,13 @@
 			"lstm": true,
 			"peepholes" : false,
 			"bidirectional" : false,
-			"expected_input_size" : 512,
+			"expected_input_size" : 1024,
 			"hidden_size" : 512,
 			"dropout_keep_prob" : 1.0,
 			"init_forget_bias" : 0.0,
 			"input_layers" : ["encoder0"],
 			"output_merge_mode" : false,
-			"input_merge_mode" : "sum"
+			"input_merge_mode" : "concat"
 		},
 		"encoder2": {
 			"lstm": true,
