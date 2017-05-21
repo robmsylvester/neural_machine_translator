@@ -38,6 +38,7 @@ def _create_encoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
 #TODO - this needs to become dynamic instead of static rnn's, probably. depending on timer calls. fuckin' padding.
 def run_encoder_NEW(encoder_json,
                     encoder_inputs,
+                    hidden_states_stack,
                     num_encoder_symbols,
                     embedding_size,
                     dtype=None):
@@ -101,13 +102,15 @@ def run_encoder_NEW(encoder_json,
           #inputs = tf.cond(len(input_list) > 1,
           #  lambda:tf.concat(input_list, axis=1),
           #  lambda:input_list[0])
-          inputs = tf.unstack(tf.concat(input_list, axis=1)) #we unstack to get a list
-          print("the shape of the inputs after concatenating is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
+          print("the shape of the input list BEFORE concatenating is shapes %s and there are %d of them" % (str(inputs[0].get_shape()), len(input_list)))
+          inputs = tf.unstack(tf.concat(input_list, axis=2)) #we unstack to get a list
+          print("the shape of the inputs AFTER concatenating is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
         elif layer_parameters['input_merge_mode'] == 'sum':
           #inputs = tf.unstack(tf.add_n([i for i in input_list])) #TODO - correct here? unstack check
           #inputs = tf.cond(len(input_list) > 1,
           #  lambda:tf.unstack(tf.add_n(input_list)),
           #  lambda:input_list[0])
+          print("******************************************")
           inputs = tf.unstack(tf.add_n(input_list))
           print("going to sum inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(inputs[0].get_shape())))
           print("the shape of the inputs after summing is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
@@ -156,7 +159,7 @@ def run_encoder_NEW(encoder_json,
     if len(stack_state) == 2:
       assert type(stack_state[0]) is core_rnn_cell_impl.LSTMStateTuple, "top-level forward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
       assert type(stack_state[1]) is core_rnn_cell_impl.LSTMStateTuple, "top-level backward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
-      stack_state = tf.concat(stack_state, axis=1) #concatenate the bidirectional states
+      stack_state = tf.concat(stack_state, axis=1) #concatenate the bidirectional states. #TODO - make sure this axis is right
     elif len(stack_state) == 1:
       assert type(stack_state[0]) is core_rnn_cell_impl.LSTMStateTuple, "top-level forward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
       stack_state = stack_state[0]
@@ -165,7 +168,7 @@ def run_encoder_NEW(encoder_json,
     #for now, we will just concatenate these by default
     if len(cell_outputs[layer_name]) == 2:
       print("the top level layer of your stack is bidirectional. you should specify in the json architecture to use an output merge mode of either concat or sum for this layer. defaulting to concat")
-      stack_outputs = tf.concat(cell_outputs[layer_name], axis=1) #check this axis
+      stack_outputs = tf.concat(cell_outputs[layer_name], axis=1) #concatenate the bidirectional states. #TODO - make sure this axis is right
     elif len(cell_outputs[layer_name]) == 1:
       stack_outputs = cell_outputs[layer_name][0]
 
@@ -259,8 +262,8 @@ def run_encoder(encoder_inputs,
     return encoder_outputs, encoder_state
 
 # Concatenation of encoder outputs to put attention on.
-# TODO - encoder hidden size here is written here instead of output_size
-# way because it is assumed top layer is not bidirectional, or otherwise
+# TODO - encoder hidden size here is written here instead of output_size. NEED TO PASS NEW PARAMETER BECAUSE TOP LAYER MIGHT BE BIDIRECTIONAL
+# done this way because it is assumed top layer is not bidirectional, or otherwise
 # have any reason to use a different variable.
 def get_attention_state_from_encoder_outputs(encoder_outputs,
                                             scope=None,

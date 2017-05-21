@@ -238,6 +238,8 @@ def run_model(encoder_inputs,
 
     #Then we create an attention state by reshaping the encoder outputs. This amounts to creating an additional
     #dimension, namely attention_length, so that our attention states are of shape [batch_size, atten_len=1, atten_size=size of last lstm output]
+    #these attention states are used in every calculation of attention during the decoding process
+    #we will use the STATE output from the decoder network as a query into the attention mechanism.
     attention_states = encoder.get_attention_state_from_encoder_outputs(encoder_outputs,
                                                                 dtype=dtype)
 

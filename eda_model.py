@@ -341,7 +341,8 @@ class EncoderDecoderAttentionModel(object):
 
     For example, if a sentence "I have a dog" translated to "Io non ho un gatto" (I don't have a cat), then
     perhaps we need to boost the importance of getting the words "I", "have", "a" and "dog". If we nailed
-    the sentence, and it therefore has low perplexity, the weights for these logits could decrease
+    the sentence, and it therefore has low perplexity, the weights for these logits could decrease.
+    This is just an idea, and probably just a repetition of what the other layers are learning.
 
     For now, we simply treat PAD_ID as a weight of 0, and we treat the final length index as 0. all other
     words get an importance of 1."""
