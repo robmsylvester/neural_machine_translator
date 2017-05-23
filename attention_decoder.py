@@ -99,15 +99,15 @@ def validate_attention_decoder_inputs(decoder_inputs, num_heads, attention_state
 #TODO - modularize this to read from JSON like I did with image project
 def decoder_rnn(attn_input, hidden_states_stack, num_layers=None):
 
-  if num_layers != len(hidden_states):
-    raise ValueError("expected %d hidden states. instead only see %d hidden states" % (num_layers, len(hidden_states)))
+  if num_layers != len(hidden_states_stack):
+    raise ValueError("expected %d hidden states. instead only see %d hidden states" % (num_layers, len(hidden_states_stack)))
 
   with variable_scope.variable_scope('decoder_layer_0') as scope:
     fw0 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
                         FLAGS.decoder_use_peepholes,
                         FLAGS.decoder_init_forget_bias,
                         FLAGS.decoder_dropout_keep_probability)
-    outputs0, hidden_states[0] = fw0(attn_input, hidden_states_stack[0], scope=scope)
+    outputs0, hidden_states_stack[0] = fw0(attn_input, hidden_states_stack[0], scope=scope)
 
     #print("at the end of the decoder_rnn layer 1, the scope name is %s" % scope.name)
   with variable_scope.variable_scope('decoder_layer_1') as scope:
@@ -115,7 +115,7 @@ def decoder_rnn(attn_input, hidden_states_stack, num_layers=None):
                         FLAGS.decoder_use_peepholes,
                         FLAGS.decoder_init_forget_bias,
                         FLAGS.decoder_dropout_keep_probability)
-    outputs1, hidden_states[1] = fw1(outputs0, hidden_states_stack[1], scope=scope)
+    outputs1, hidden_states_stack[1] = fw1(outputs0, hidden_states_stack[1], scope=scope)
     #print("at the end of the decoder_rnn layer 2, the scope name is %s" % scope.name)  
   with variable_scope.variable_scope('decoder_layer_2') as scope:
     fw2 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
@@ -127,7 +127,7 @@ def decoder_rnn(attn_input, hidden_states_stack, num_layers=None):
     #we don't need to call unstack here because the inputs into the __call__ function of the LSTMCell
     #are a single tensor, not a list of tensors.
     inputs2 = tf.add_n([outputs0,outputs1], name="residual_decoder_layer2_input")
-    outputs2, hidden_states[2] = fw2(inputs2, hidden_states_stack[2], scope=scope)
+    outputs2, hidden_states_stack[2] = fw2(inputs2, hidden_states_stack[2], scope=scope)
     #print("at the end of the decoder_rnn layer 3, the scope name is %s" % scope.name)
   with variable_scope.variable_scope('decoder_layer_3') as scope:
     fw3 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
@@ -137,7 +137,7 @@ def decoder_rnn(attn_input, hidden_states_stack, num_layers=None):
 
     #add a reisdual connection to the outputs from the second layer
     inputs3 = tf.add_n([outputs1, outputs2], name="residual_decoder_layer4_input")
-    outputs3, hidden_states[3] = fw3(inputs3, hidden_states_stack[3], scope=scope)
+    outputs3, hidden_states_stack[3] = fw3(inputs3, hidden_states_stack[3], scope=scope)
     #print("at the end of the decoder_rnn layer 4, the scope name is %s" % scope.name)
   output_size = fw3.output_size
 
@@ -326,7 +326,7 @@ def run_bahdanu_attention_mechanism(query_state,
 
 
 def attention_decoder(decoder_inputs,
-                      initial_state,
+                      initial_decoder_state,
                       attention_states,
                       output_size=None,
                       num_heads=1,
@@ -336,14 +336,24 @@ def attention_decoder(decoder_inputs,
                       initial_state_attention=False):
   """RNN decoder with attention for the sequence-to-sequence model.
 
-  In this context "attention" means that, during decoding, the RNN can look up
-  information in the additional tensor attention_states, and it does this by
-  focusing on a few entries from the tensor. This model has proven to yield
-  especially good results in a number of sequence-to-sequence tasks. This
-  implementation is based on http://arxiv.org/abs/1412.7449 (see below for
-  details). It is recommended for complex sequence-to-sequence tasks.
+  Implementation based on http://arxiv.org/abs/1412.7449 
 
-  Args:
+  Rob Documentation:
+    Arguments:
+
+    decoder-inputs: This is a list of 2D Tensors of shape [batch_size, input_size].
+      Depending on the bucket size, input_size will be a padded sequence of whatever
+      length the target language bucket size is. 
+
+    initial_decoder_state: The initial decoder state. This can be tricky, because the
+      architecture of the encoder and the decoder might differ, therefore a 1:1 mirror
+      cannot be made where you simply initialize the decoder state to the last state of
+      the encoder.
+
+      One alternative is to pass the final state of the encoder and use this as the
+      initial state of each stack of the decoder.
+
+  Argumentss:
     decoder_inputs: A list of 2D Tensors [batch_size x input_size].
     initial_state: 2D Tensor [batch_size x cell.state_size].
     attention_states: 3D Tensor [batch_size x attn_length x attn_size].
@@ -394,6 +404,11 @@ def attention_decoder(decoder_inputs,
   #Bahdanu attention has more trainable weights (3 sets) compared to Manning's (1 set of weights) - see cs224n lec 16
   with variable_scope.variable_scope(scope or "attention_decoder", dtype=dtype) as scope:
 
+    #TODO - some assertion about the lstm state tuple only being there if we are indeed dealing with an lstm, not gru
+    print("Reached the attention decoder. The type of the initial state is %s" % str(type(initial_decoder_state)))
+    print("Reached the attention decoder. The shape of initial state 0 is %s" % str((initial_decoder_state[0].get_shape())))
+    print("Reached the attention decoder. The shape of initial state 1 is %s" % str((initial_decoder_state[1].get_shape())))
+
     #verify we have known shapes and nonzero inputs
     attn_length, attn_size = validate_attention_decoder_inputs(decoder_inputs, num_heads, attention_states)
 
@@ -406,7 +421,7 @@ def attention_decoder(decoder_inputs,
     #print("the attention decoder has been called with attention states sized " + str(attention_states.get_shape()))
 
     #the attention states come in and they are shaped (probably) as such:
-    #   (batch size, 1 (or whatever length), attention_size)
+    #   (batch size, 1 (or whatever attention length is), attention_size)
     # these need to be reshaped for a convolutional operation that represents the 
     reshaped_attention_states = array_ops.reshape(attention_states,
                                [-1, attn_length, 1, attn_size])
@@ -416,9 +431,6 @@ def attention_decoder(decoder_inputs,
     #we need to construct the following equation:
     #attention = softmax(V^T * tanh(W_1 * attention_states + W_2 * new_state)), where new_state is produced on each cell output
     #there are three parameters here, namely, V^t, W_1 and W_2. 
-
-    #store the attention parameter W_1 * attention_state
-    hidden_attention_states = convolve_attention_states(reshaped_attention_states, num_heads, attn_size)
 
     attention_vec_size = attn_size  # Size of query vectors for attention.
 
@@ -430,12 +442,24 @@ def attention_decoder(decoder_inputs,
           variable_scope.get_variable("attention_v_head_%d" % head_idx, [attention_vec_size])
       )
 
-    #print("the attention decoder has reshaped the attention state to a new size using 1x1 convolution. now size is " + str(hidden_attention_states[head_idx].get_shape()))
-
+    #print("the attention decoder has reshaped the attention state to a new size using 1x1 convolution.
+    #now size is " + str(hidden_attention_states[head_idx].get_shape()))
     outputs = []
     prev = None
+
+
+
+
+    #this is a design decision. what do we do to initialize decoder state?
+    #
     num_decoder_layers = 4
-    hidden_states = [initial_state for _ in xrange(num_decoder_layers)] #LSTM State Tuples
+    hidden_states = [initial_decoder_state for _ in xrange(num_decoder_layers)] #a list of LSTM State Tuples
+
+
+
+
+
+
 
     #we need to store the batch size of the decoder inputs to use later for reshaping.
     # because these come in as a list of tensors, just take the first one.
@@ -450,10 +474,13 @@ def attention_decoder(decoder_inputs,
             batch_attn_size, dtype=dtype) for _ in xrange(num_heads)
     ]
 
+    #store the attention parameter W_1 * attention_state
+    hidden_attention_states = convolve_attention_states(reshaped_attention_states, num_heads, attn_size)
+
     for a in attns:  # Ensure the second shape of attention vectors is set.
       a.set_shape([None, attn_size])
     if initial_state_attention:
-      attns = run_bahdanu_attention_mechanism(initial_state,
+      attns = run_bahdanu_attention_mechanism(initial_decoder_state,
                                       reshaped_attention_states,
                                       hidden_attention_states,
                                       weights_v,

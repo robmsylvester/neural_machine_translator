@@ -38,11 +38,9 @@ def _create_encoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
 #TODO - this needs to become dynamic instead of static rnn's, probably. depending on timer calls. fuckin' padding.
 def run_encoder_NEW(encoder_json,
                     encoder_inputs,
-                    hidden_states_stack,
                     num_encoder_symbols,
                     embedding_size,
                     dtype=None):
-
 
   # embeddings need to become non-updated-by-backprop embeddings from unsupervised glove, word2vec, or fasttext options
   with variable_scope.variable_scope("encoder", dtype=dtype) as scope:
@@ -86,12 +84,12 @@ def run_encoder_NEW(encoder_json,
 
         #add to inputs the residual connections that connect to this layer
         for candidate_layer_name, candidate_layer_output in cell_outputs.iteritems():
-          print("layer %s is checking layer %s for inputs" %  (layer_name, candidate_layer_name))
+          #print("layer %s is checking layer %s for inputs" %  (layer_name, candidate_layer_name))
           if candidate_layer_name == layer_name: #layers don't have residual connections to themselves...
-            print("skipping")
+            #print("skipping")
             continue
           elif candidate_layer_name in layer_parameters['input_layers']: #we will gather the layers that are marked in the architecture
-            print("layer %s will use input from layer %s" % (layer_name, candidate_layer_name))
+            #print("layer %s will use input from layer %s" % (layer_name, candidate_layer_name))
             for layer_output in candidate_layer_output: #candidate_layer_output is always a list, sometimes with 1 element, sometimes with 2
               input_list.append(layer_output)
 
@@ -102,7 +100,7 @@ def run_encoder_NEW(encoder_json,
           #inputs = tf.cond(len(input_list) > 1,
           #  lambda:tf.concat(input_list, axis=1),
           #  lambda:input_list[0])
-          print("the shape of the input list BEFORE concatenating is shapes %s and there are %d of them" % (str(inputs[0].get_shape()), len(input_list)))
+          print("the shape of the input list BEFORE concatenating is shape %s and there are %d of them" % (str(inputs[0].get_shape()), len(input_list)))
           inputs = tf.unstack(tf.concat(input_list, axis=2)) #we unstack to get a list
           print("the shape of the inputs AFTER concatenating is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
         elif layer_parameters['input_merge_mode'] == 'sum':
