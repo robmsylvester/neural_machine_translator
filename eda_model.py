@@ -55,8 +55,7 @@ class EncoderDecoderAttentionModel(object):
                learning_rate,
                learning_rate_decay_factor,
                min_learning_rate,
-               encoder_json_path, #TODO - add headers for this
-               decoder_json_path,
+               encoder_decoder_json_path, #TODO - add headers for this
                use_lstm=True,
                num_samples=512,
                forward_only=False,
@@ -99,9 +98,7 @@ class EncoderDecoderAttentionModel(object):
         tf.maximum(self.minimum_learning_rate, self.learning_rate * self.learning_rate_decay_factor, "learning_rate_decay"))
 
     #Load the JSON architecture stacks for LSTMs/GRUs and verify them
-    self.encoder_architecture = model_utils.load_stack_architecture_from_json(encoder_json_path)
-    self.decoder_architecture = "TODO"
-    #self.decoder_architecture = model_utils.load_stack_architecture_from_json(decoder_json_path)
+    self.encoder_architecture, self.decoder_architecture = model_utils.load_encoder_decoder_architecture_from_json(encoder_decoder_json_path)
 
     # If we use sampled softmax, we need an output projection.
     #output_projection = None

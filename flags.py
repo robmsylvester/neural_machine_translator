@@ -52,6 +52,7 @@ tf.app.flags.DEFINE_integer("num_buckets", 3, "Will use this number to look up d
 
 
 #Learning Rate Flags
+#TODO - make this trainable and saveable so it doesn't reload at 0.5
 tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
 #at 316,000 this was .0217
 
@@ -94,18 +95,43 @@ tf.app.flags.DEFINE_integer("decoder_hidden_size", 512,
                             "Number of units in the hidden size of decoder LSTM layers. Bidirectional layers will therefore output 2*this")
 
 
-tf.app.flags.DEFINE_string("encoder_architecture_json", 'encoder_architecture.json',
-                            "The file name which stores the JSON architecture of the encoder")
+#decoder_state_initializer's mechanism will depend on the implementation. there are a few different ways of doing it
+# essentially, you need to figure out what to do to the decoder state given the last encoder state, either just the top layer of it
+# or all layers of it. there are a few options
 
-tf.app.flags.DEFINE_string("decoder_architecture_json", 'decoder_architecture.json',
-                            "The file name which stores the JSON architecture of the encoder")
+# 1. "mirror" - take the final state of every layer in the encoder and apply it as the first state of the decoder
+#             - THIS ONLY WORKS if you have the exact same number of layers, bidirectional layers, and layer sizes, between encoder and decoder
+#
+# 2. "top_layer_mirror" - take the final state of the top layer of the encoder and use it for the state of the decoder
+#                         at each layer. THIS ONLY WORKS if you have the exact same layer size on the decoder as the top layer
+#
+# 3. "bahdanu" - take the final state of the top layer of the encoder. if bidirectional, use the BACKWARD STATE ONLY
+#                this top state is then multiplied by a trained weight vector with size equal to the sum of the hidden
+#                size of each layer of the decoder. finally, this is passed through a hyperbolic tangent.
+#                this way, we can create a list of initial states to use in the decoder
+#                this approach will add a trainable weight vector to the parameters
+#
+# 4. "nematus" - similar to bahdanu, except using a mean annotation of the hidden states across all time steps of the
+#                encoder, not just the final one, multiplied by the trained weight parameter. This does not use the backward direction only, but both
+#                concatenated in the event that the top layer of the encoder is bidirectional.
+#                this is passed through a hyperbolic tangent as well. 
+#
+tf.app.flags.DEFINE_string("decoder_state_initializer", "top_layer_mirror",
+                           "The metric used to calculate initial state values for the decoder from the encoder")
+
+
+
+
+#This is where we store the JSON of the encoder and decoder architecture
+#See the file encoder_decoder_architecture_help.txt for more information
+tf.app.flags.DEFINE_string("encoder_decoder_architecture_json", 'encoder_decoder_architecture.json',
+                            "The file name which stores the JSON architecture of the encoder and decoder")
+
 
 tf.app.flags.DEFINE_boolean("encoder_use_peepholes", False,
                             "Whether or not to use peephole (diagonal) connections on LSTMs in the encoder")
 tf.app.flags.DEFINE_boolean("decoder_use_peepholes", False,
                             "Whether or not to use peephole (diagonal) connections on LSTMs in the decoder")
-
-
 
 tf.app.flags.DEFINE_float("encoder_init_forget_bias", 0.0,
                             "The initial forget bias (0-1) to use for LSTMs in the encoder")
@@ -117,7 +143,6 @@ tf.app.flags.DEFINE_float("encoder_dropout_keep_probability", 1.0,
                             "The keep probability to use in the dropout wrapper for LSTM's in the encoder. To disable dropout, just use 1.0")
 tf.app.flags.DEFINE_float("decoder_dropout_keep_probability", 1.0,
                             "The keep probability to use in the dropout wrapper for LSTM's in the decoder. To disable dropout, just use 1.0")
-
 
 #Flesh this out
 def flag_test():

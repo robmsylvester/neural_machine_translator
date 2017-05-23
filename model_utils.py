@@ -90,7 +90,18 @@ def _create_output_projection(target_size,
   weights = tf.transpose(weights_t)
   biases = tf.get_variable("output_projection_biases", [target_size], dtype=tf.float32)
   return (weights, biases, weights_t)
-  
+
+def verify_encoder_decoder_stack_architecture(stack_json, decoder_state_initializer):
+
+  if verify_valid_decoder_state_initializer(stack_json, decoder_state_initializer):
+    print("Decoder state initializer is valid given the encoder and decoder architectures")
+
+  if verify_recurrent_stack_architecture(stack_json['encoder']):
+    print("Encoder architecture is valid")
+
+  if verify_recurrent_stack_architecture(stack_json['decoder']):
+    print("Decoder architecture is valid")
+
 
 def verify_recurrent_stack_architecture(stack_json):
   permitted_input_merge_modes = [False,'concat','sum'] #when multiple layers connect to an LSTM/GRU, what do we do with these inputs? concat or sum, for now
@@ -108,7 +119,7 @@ def verify_recurrent_stack_architecture(stack_json):
   #   'encoder3' : [1024]
   # }
   
-  #go one-by-one and make sure the architecture adds up
+  #go one-by-one and make sure the architecture layer sizes add up
   for layer_name, layer_parameters in stack_json["layers"].iteritems():
 
     if cur_layer == 0:
@@ -131,6 +142,7 @@ def verify_recurrent_stack_architecture(stack_json):
     # taking a look at the merge modes.
     #
     if layer_parameters['bidirectional']:
+
       if layer_parameters['output_merge_mode'] == False: #do nothing special to the bidirectional output, store it once for fw and once for bw
         output_sizes[layer_name] = [ layer_parameters['hidden_size'], layer_parameters['hidden_size'] ]
       elif layer_parameters['output_merge_mode'] == 'concat':
@@ -169,20 +181,28 @@ def verify_recurrent_stack_architecture(stack_json):
         assert sum_connected_layers == layer_parameters['expected_input_size'], "Layer %s expected input size of %d differs from actual input size of %d" % (layer_name, layer_parameters['expected_input_size'], sum_connected_layers)
 
     cur_layer += 1
+    last_layer = layer_name
+
+  #now that we are all done, we should probably check that the final output layer isn't a list of outputs.
+  #this is because this needs to be fed to the output projection.
+  assert len(output_sizes[last_layer]) == 1, "The length of the final layer's output size lis is %d. This is likely because the layer is bidirectional, and the output muerge mode is not concat or sum. It needs to be combined because the output projection expects one tensor as input." % len(output_sizes[last_layer])
 
   return True
   
 
-def load_stack_architecture_from_json(json_file_path):
+def load_encoder_decoder_architecture_from_json(json_file_path, decoder_state_initializer):
   with open(json_file_path, 'rb') as model_data:
     try:
+
+      #notice we have an ordered dictionary. this is because we want to make sure we are going through the layers
+      # in the right order on the verification, and when setting up the network itself. Python runs this is O(n) time
+      # so this doesn't cost us really anything, and we get to have meaningful layer names.
       stack_model = json.load(model_data, object_pairs_hook=OrderedDict)
       print("Loaded JSON model architecture from %s" % json_file_path)
-      print("This architecture will now be verified...")
+      print("This architecture will now be verified using decoder state initializer %s..." % decoder_state_initializer)
 
-      if verify_recurrent_stack_architecture(stack_model):
-        print("Valid stack model architecture")
-        return stack_model #this is the JSON object parsed as a python dict
+      if verify_encoder_decoder_stack_architecture(stack_model, decoder_state_initializer):
+        return stack_model['encoder'], stack_model['decoder'] #this is the JSON object parsed as a python dict
 
     except ValueError, e:
       print("Invalid json in %s" % json_file_path)
@@ -228,7 +248,7 @@ def run_model(encoder_inputs,
     #                                        embedding_size,
     #                                        dtype=dtype)
 
-    encoder_outputs, encoder_state = encoder.run_encoder_NEW(encoder_architecture,
+    encoder_output, encoder_states = encoder.run_encoder_NEW(encoder_architecture,
                                         encoder_inputs,
                                         num_encoder_symbols,
                                         embedding_size,
@@ -240,13 +260,13 @@ def run_model(encoder_inputs,
     #dimension, namely attention_length, so that our attention states are of shape [batch_size, atten_len=1, atten_size=size of last lstm output]
     #these attention states are used in every calculation of attention during the decoding process
     #we will use the STATE output from the decoder network as a query into the attention mechanism.
-    attention_states = encoder.get_attention_state_from_encoder_outputs(encoder_outputs,
+    attention_states = encoder.get_attention_state_from_encoder_outputs(encoder_output,
                                                                 dtype=dtype)
 
     #then we run the decoder.
     return attention_decoder.embedding_attention_decoder(
           decoder_inputs,
-          encoder_state, #this is an LSTMStateTuple
+          encoder_states, #this is likely a list of LSTMStateTuple
           attention_states,
           num_decoder_symbols,
           embedding_size,

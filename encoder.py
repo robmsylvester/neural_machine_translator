@@ -22,7 +22,6 @@ def _create_encoder_cell(json_layer_parameters):
                                 json_layer_parameters['init_forget_bias'],
                                 json_layer_parameters['dropout_keep_prob'])
 
-
 def _create_encoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_keep_prob):
   c = core_rnn_cell_impl.LSTMCell(hidden_size, #number of units in the LSTM
                 use_peepholes=use_peepholes,
@@ -77,6 +76,7 @@ def run_encoder_NEW(encoder_json,
         #cell outputs and states are created. if unidirectional gru or lstm, out is still a list.
         #if bidirectional, it is a list of two tensors, unless they are concatenated
         cell_outputs[layer_name] = []
+        cell_states[layer_name] = []
 
         #TODO, take this and the loop and refactor into a get_inputs function
         #first loop will get embeddings, later loops will use previous iteration outputs, plus any residual connections
@@ -141,39 +141,39 @@ def run_encoder_NEW(encoder_json,
           else:
             cell_outputs[layer_name].append(out_f)
             cell_outputs[layer_name].append(out_b)
-          stack_state = [state_f, state_b]
+          cell_states[layer_name].append([state_f,state_b])
 
         else:
           cf = _create_encoder_cell(layer_parameters)
           out_f, state_f = core_rnn.static_rnn(cf, inputs, dtype=dtype)
           cell_outputs[layer_name].append(out_f)
-          stack_state = [state_f]
+          cell_states[layer_name].append([state_f])
 
       current_layer += 1
 
     #end main loop
     #we do care about the states, but only the top most state, which is what is stored in state_f unless it is bidirectional
     #state tuples are now stored as (cell_state, hidden_state)
-    if len(stack_state) == 2:
-      assert type(stack_state[0]) is core_rnn_cell_impl.LSTMStateTuple, "top-level forward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
-      assert type(stack_state[1]) is core_rnn_cell_impl.LSTMStateTuple, "top-level backward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
-      stack_state = tf.concat(stack_state, axis=1) #concatenate the bidirectional states. #TODO - make sure this axis is right
-    elif len(stack_state) == 1:
-      assert type(stack_state[0]) is core_rnn_cell_impl.LSTMStateTuple, "top-level forward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
-      stack_state = stack_state[0]
+    #if len(stack_state) == 2:
+    #  assert type(stack_state[0]) is core_rnn_cell_impl.LSTMStateTuple, "top-level forward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
+    #  assert type(stack_state[1]) is core_rnn_cell_impl.LSTMStateTuple, "top-level backward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
+    #  stack_state = tf.concat(stack_state, axis=1) #concatenate the bidirectional states. #TODO - make sure this axis is right
+    #elif len(stack_state) == 1:
+    #  assert type(stack_state[0]) is core_rnn_cell_impl.LSTMStateTuple, "top-level forward LSTM returned state should be an LSTMStateTuple. state is tuple is now true by default in TF."
+    #  stack_state = stack_state[0]
 
     #we do care about the outputs, but they might be bidirectional outputs too, so we must check that as well
     #for now, we will just concatenate these by default
-    if len(cell_outputs[layer_name]) == 2:
-      print("the top level layer of your stack is bidirectional. you should specify in the json architecture to use an output merge mode of either concat or sum for this layer. defaulting to concat")
-      stack_outputs = tf.concat(cell_outputs[layer_name], axis=1) #concatenate the bidirectional states. #TODO - make sure this axis is right
-    elif len(cell_outputs[layer_name]) == 1:
-      stack_outputs = cell_outputs[layer_name][0]
 
-    return stack_outputs, stack_state
+    stack_output = tf.cond( len(cell_outputs[layer_name]) == 2,
+      lambda: tf.concat(cell_outputs[layer_name], axis=1),
+      lambda: cell_outputs[layer_name][0])
+
+
+    return stack_output, stack_states
 
 #TODO - modularize this from javascript object and replace with the functions above
-def run_encoder(encoder_inputs,
+def run_encoder_DEPRECATED_DELETE_THIS(encoder_inputs,
             num_encoder_symbols,
             embedding_size,
             dtype=None):
