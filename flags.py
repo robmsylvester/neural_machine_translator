@@ -155,5 +155,5 @@ def flag_test():
     assert f.num_buckets in [3], "Only 3 buckets are supported, for now, but you can easily change this. Just pass in bucket sizes."
     assert f.num_buckets * f.minimum_data_ratio_per_bucket < 1, "Product of the number of buckets (%d) and the data ratio per bucket (%f) must be less than 1" % (f.num_buckets, f.minimum_data_ratio_per_bucket)
 
-    assert os.path.isfile(f.encoder_architecture_json), "Invalid JSON file location passed for encoder architecture. Could not find %s" % f.encoder_architecture_json
+    assert os.path.isfile(f.encoder_decoder_architecture_json), "Invalid JSON file location passed for encoder architecture. Could not find %s" % f.encoder_architecture_json
     #TODO - add decoder as well

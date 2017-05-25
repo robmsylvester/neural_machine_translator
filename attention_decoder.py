@@ -36,7 +36,10 @@ def _create_decoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
   return c
 
 #This needs a lot more arguments...
-def initialize_decoder_states_from_final_encoder_states(final_encoder_states, num_decoder_layers):
+def initialize_decoder_states_from_final_encoder_states(final_encoder_states, num_decoder_layers, ):
+
+  #TODO, implement this
+  assert FLAGS.decoder_state_initializer == top_layer_mirror, "Haven't implemented the other cases yet for initializing decoder states."
   return [final_encoder_states[-1] for _ in xrange(num_decoder_layers)] #a list of LSTM State Tuples
 
   #HERE IS WHAT WILL EVENTUALLY GO HERE
@@ -44,6 +47,7 @@ def initialize_decoder_states_from_final_encoder_states(final_encoder_states, nu
   #option to mimic encoder-decoder states if architectures are perfect mirror
   #option to just do what i did above, and use top layer status for all of them. still need parameterization
   #use a mean of the source annotation as per https://arxiv.org/pdf/1703.04357.pdf
+  #
 
 
 
@@ -413,8 +417,6 @@ def attention_decoder(decoder_inputs,
     prev = None
 
 
-
-
     #this is a design decision. what do we do to initialize decoder state?
     num_decoder_layers = 4
     top_encoder_state = final_encoder_states[-1]
@@ -423,7 +425,6 @@ def attention_decoder(decoder_inputs,
     hidden_states = initialize_decoder_states_from_final_encoder_states(final_encoder_states, num_decoder_layers)
 
     #hidden_states = [final_encoder_states[-1] for _ in xrange(num_decoder_layers)] #a list of LSTM State Tuples
-
 
 
     #we need to store the batch size of the decoder inputs to use later for reshaping.
@@ -593,9 +594,14 @@ def embedding_attention_decoder(decoder_inputs,
   #print(type(output_projection[1]))
   #print("var scope of w_t from custom contrib is " + str(output_projection[0].get_variable_scope().name))
 
+
+  print("***********************************POOP")
+  print(len(initial_state))
+  print(type(initial_state))
+
   print("reached embedding attention decoder")
-  print("the initial cell state for this attention decoder is the encoder state from the last run of the encoder, which as shape %s" % str(initial_state[0].get_shape()))
-  print("the initial hidden state for this attention decoder is the encoder state from the last run of the encoder, which as shape %s" % str(initial_state[1].get_shape()))
+  print("the initial cell state for this attention decoder is the encoder state from the last run of the encoder, which has shape %s" % str(initial_state[0].get_shape()))
+  print("the initial hidden state for this attention decoder is the encoder state from the last run of the encoder, which has shape %s" % str(initial_state[1].get_shape()))
   print("the reshaped attention states from the encoder outputs have shape %s" % str(attention_states.get_shape()))
 
   if output_projection is not None:

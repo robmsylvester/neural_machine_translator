@@ -61,11 +61,12 @@ def run_encoder_NEW(encoder_json,
       # them to be a sequence input for the lstm layers, so we reshape them back into a list of length bucket_size containing tensors of shape (batch_size, embed_size)
       embedded_encoder_inputs = tf.unstack(embedded_encoder_inputs)
 
-    print("the embedded encoder inputs, after the thick, hot embedding lookup, transformed these inputs into the shape %s" % str(embedded_encoder_inputs[0].get_shape()))
-    print(len(embedded_encoder_inputs))
+    print("the embedded encoder inputs each have shape %s, and there are %d of them in the list" % (str(embedded_encoder_inputs[0].get_shape()), len(embedded_encoder_inputs)))
+
 
     current_layer = 0
     cell_outputs = OrderedDict() #indexed by layer name in json, which stores a dict with keys "output" and "state"
+    cell_states = OrderedDict() 
 
     #TODO - this NEEDS to become dynamic rnn
     #TODO - this is potentially buggy with a dict and iterating items. make this an ordered dict too from a layer up
@@ -131,7 +132,7 @@ def run_encoder_NEW(encoder_json,
           #store the outputs according to how they have to be merged.
           #they will be a list with 2 elements, the forward and backward outputs. or, a list with one element, the concatenation or sum of the 2 elements.
           
-          #if wondering why not place this in a tf.cond function? because model shouldn't ever dynamically change. if it did, would need something better
+          #TODO - remove these checks form every encoder pass
           if layer_parameters['output_merge_mode'] == 'concat':
             #assert out_f[0].get_shape().ndims == 2
             cell_outputs[layer_name].append(out_fb)
@@ -141,6 +142,8 @@ def run_encoder_NEW(encoder_json,
           else:
             cell_outputs[layer_name].append(out_f)
             cell_outputs[layer_name].append(out_b)
+
+          #The state is always the same for bidirectional layers, and we will concatenate it later if its the top layer
           cell_states[layer_name].append([state_f,state_b])
 
         else:
@@ -165,11 +168,35 @@ def run_encoder_NEW(encoder_json,
     #we do care about the outputs, but they might be bidirectional outputs too, so we must check that as well
     #for now, we will just concatenate these by default
 
-    stack_output = tf.cond( len(cell_outputs[layer_name]) == 2,
-      lambda: tf.concat(cell_outputs[layer_name], axis=1),
-      lambda: cell_outputs[layer_name][0])
+    #stack_output = tf.cond( len(cell_outputs[layer_name]) == 2,
+    #  lambda: tf.concat(cell_outputs[layer_name], axis=1),
+    #  lambda: cell_outputs[layer_name][0])
+
+    if FLAGS.decoder_state_initializer == 'nematus':
+      raise NotImplementedError, "Haven't written the nematus decoder state initializer yet, and currently this function only returns and tracks top-level states in the loop."
+
+    #stack_states = tf.cond( len(cell_states[layer_name]) == 2,
+    #  lambda: tf.concat(cell_states[layer_name], axis=1),
+    #  lambda: cell_states[layer_name][0])
 
 
+    #TODO - fix the type problems here. Look at this below
+    #stack_output is a list/tensor, and stack_states is a tensor. this is dog shit. they should all be a list of tensors, every time.
+    if len(cell_outputs[layer_name]) == 2:
+      stack_output = tf.concat(cell_outputs[layer_name], axis=1) #returns a tensor. THIS IS BAD RIGHT NOW, needs to be a list
+    elif len(cell_outputs[layer_name]) == 1:
+      stack_output = cell_outputs[layer_name][0] #returns a list
+    else:
+      raise ValueError, "Expected 1 or 2 total output tensors in list of top layer of encoder stack outputs"
+
+    if len(cell_states[layer_name]) == 2:
+      stack_states = tf.concat(cell_states[layer_name], axis=1) #returns a tensor
+    elif len(cell_states[layer_name]) == 1:
+      stack_states = cell_states[layer_name][0][0] #returns a tensor
+    else:
+      raise ValueError, "Expected 1 or 2 total output tensors in list of top layer of encoder stack states"
+
+    print("The type for stack states is %s" % type(stack_states) )
     return stack_output, stack_states
 
 #TODO - modularize this from javascript object and replace with the functions above

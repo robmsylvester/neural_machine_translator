@@ -91,24 +91,12 @@ def _create_output_projection(target_size,
   biases = tf.get_variable("output_projection_biases", [target_size], dtype=tf.float32)
   return (weights, biases, weights_t)
 
-def verify_encoder_decoder_stack_architecture(stack_json, decoder_state_initializer):
-
-  if verify_valid_decoder_state_initializer(stack_json, decoder_state_initializer):
-    print("Decoder state initializer is valid given the encoder and decoder architectures")
-
-  if verify_recurrent_stack_architecture(stack_json['encoder']):
-    print("Encoder architecture is valid")
-
-  if verify_recurrent_stack_architecture(stack_json['decoder']):
-    print("Decoder architecture is valid")
-
-
-def verify_recurrent_stack_architecture(stack_json):
+def _verify_recurrent_stack_architecture(stack_json):
   permitted_input_merge_modes = [False,'concat','sum'] #when multiple layers connect to an LSTM/GRU, what do we do with these inputs? concat or sum, for now
   permitted_unidirectional_output_merge_modes = [False] #when a unidirectional LSTM has outputs for each time step, we dont have anything special to do. This is just for readability
   permitted_bidirectional_output_merge_modes = [False,'concat','sum']
 
-  cur_layer = 0
+  cur_layer_index = 0
   output_sizes = {}
 
   # example structure for what output sizes looks like
@@ -122,7 +110,7 @@ def verify_recurrent_stack_architecture(stack_json):
   #go one-by-one and make sure the architecture layer sizes add up
   for layer_name, layer_parameters in stack_json["layers"].iteritems():
 
-    if cur_layer == 0:
+    if cur_layer_index == 0:
       assert layer_parameters["input_merge_mode"] == False, "Input merge mode for first layer must be False"
     
     #merge mode is either concat or sum
@@ -158,19 +146,19 @@ def verify_recurrent_stack_architecture(stack_json):
         raise ValueError("For a unidirectional layer, your merge most be one of the following list:\n%s" % permitted_unidirectional_output_merge_modes)
 
     #verify the dimensionality of the expected inputs at layer k equal the output dimensionalities from layers 0->k-1 that connect to k following k's merge mode
-    if cur_layer == 0:
+    if cur_layer_index == 0:
       assert layer_parameters['expected_input_size'] == -1, "The expected_input_size of the first layer in the stack must be -1. Instead it is %d" % layer_parameters['expected_input_size']
       assert len(layer_parameters['input_layers']) == 0, "Input layers for first layer in the stack must be an empty list"
     else:
       assert len(layer_parameters['input_layers']) > 0, "Input layers for all layers other than the first in the stack must be a list with >1 elements"
       
       #list off all the output sizes that will connect to this layer
-      #print("Analyzing the inputs into layer %d, which expect an input size of %d" % (cur_layer, layer_parameters['expected_input_size']))
+      #print("Analyzing the inputs into layer %d, which expect an input size of %d" % (cur_layer_index, layer_parameters['expected_input_size']))
       connected_layer_sizes = []
       for l_name in layer_parameters['input_layers']:
         for sz in output_sizes[l_name]:
           connected_layer_sizes.append(sz) 
-      #print("Connected layers to layer %d have sizes %s" % (cur_layer, str(connected_layer_sizes)))
+      #print("Connected layers to layer %d have sizes %s" % (cur_layer_index, str(connected_layer_sizes)))
 
       #verify the sum/concatenation of these layer sizes is equal to the expected input size
       if layer_parameters['input_merge_mode'] == 'sum':
@@ -180,38 +168,68 @@ def verify_recurrent_stack_architecture(stack_json):
         sum_connected_layers = sum(connected_layer_sizes)
         assert sum_connected_layers == layer_parameters['expected_input_size'], "Layer %s expected input size of %d differs from actual input size of %d" % (layer_name, layer_parameters['expected_input_size'], sum_connected_layers)
 
-    cur_layer += 1
+    cur_layer_index += 1
     last_layer = layer_name
 
   #now that we are all done, we should probably check that the final output layer isn't a list of outputs.
   #this is because this needs to be fed to the output projection.
-  assert len(output_sizes[last_layer]) == 1, "The length of the final layer's output size lis is %d. This is likely because the layer is bidirectional, and the output muerge mode is not concat or sum. It needs to be combined because the output projection expects one tensor as input." % len(output_sizes[last_layer])
+  assert len(output_sizes[last_layer]) == 1, "The length of the final layer's output size list is %d. This is likely because the layer is bidirectional, and the output muerge mode is not concat or sum. It needs to be combined because the output projection expects one tensor as input." % len(output_sizes[last_layer])
+  assert len(output_sizes.keys()) == cur_layer_index, "Expected an output size key for each layer processed. Have %d keys but final layer index reads %d" % (len(output_sizes.keys()), cur_layer_index) #sanity check, +1 because cur_layer_index start at 0
+  return True
+
+def _verify_decoder_state_initializer(stack_json, decoder_state_initializer):
+  return True
+
+def verify_encoder_decoder_stack_architecture(stack_json, decoder_state_initializer):
+
+  print("Testing Encoder model architecture...")
+  if _verify_recurrent_stack_architecture(stack_json['encoder']):
+    print("Valid")
+  else:
+    print ("Invalid")
+    return False
+
+  print("Testing Decoder model state initialization...")
+  if _verify_decoder_state_initializer(stack_json, decoder_state_initializer):
+    print("Valid")
+  else: 
+    print ("Invalid")
+    return False
+
+  print("Testing Decoder model architecture...")
+  if _verify_recurrent_stack_architecture(stack_json['decoder']):
+    print("Valid")
+  else:
+    print("Invalid")
+    return False
 
   return True
+
   
 
 def load_encoder_decoder_architecture_from_json(json_file_path, decoder_state_initializer):
   with open(json_file_path, 'rb') as model_data:
-    try:
 
+    try:
       #notice we have an ordered dictionary. this is because we want to make sure we are going through the layers
       # in the right order on the verification, and when setting up the network itself. Python runs this is O(n) time
       # so this doesn't cost us really anything, and we get to have meaningful layer names.
       stack_model = json.load(model_data, object_pairs_hook=OrderedDict)
-      print("Loaded JSON model architecture from %s" % json_file_path)
-      print("This architecture will now be verified using decoder state initializer %s..." % decoder_state_initializer)
-
-      if verify_encoder_decoder_stack_architecture(stack_model, decoder_state_initializer):
-        return stack_model['encoder'], stack_model['decoder'] #this is the JSON object parsed as a python dict
-
     except ValueError, e:
       print("Invalid json in %s" % json_file_path)
       print(e)
       raise
+    
+    print("Loaded JSON model architecture from %s" % json_file_path)
+    print("This architecture will now be verified using decoder state initializer %s..." % decoder_state_initializer)
 
-  return False
+    if verify_encoder_decoder_stack_architecture(stack_model, decoder_state_initializer):
+      return stack_model['encoder'], stack_model['decoder'] #this is the JSON object parsed as a python dict
+    else:
+      raise Exception, "Invalid architecture. Now dying"
 
 
+#Probably delete this
 def run_json_stack_architecture(model_json):
   pass
 
