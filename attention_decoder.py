@@ -36,10 +36,15 @@ def _create_decoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
   return c
 
 #This needs a lot more arguments...
-def initialize_decoder_states_from_final_encoder_states(final_encoder_states, num_decoder_layers, ):
+#final_encoder_states - a list of either LSTM State Tuples or GRU States
+#num_decoder_layers, an integer representing the depth of the stack of LSTMS/GRU's, but just for sanity until likely removed.
+#returns the state for the decoder to start as a list itself, indexed by stack depth of the lstm or gru.
+def initialize_decoder_states_from_final_encoder_states(final_encoder_states, num_decoder_layers):
 
   #TODO, implement this
-  assert FLAGS.decoder_state_initializer == top_layer_mirror, "Haven't implemented the other cases yet for initializing decoder states."
+  print("in initialize decoder states function. final encoder states is of type %s" % str(type(final_encoder_states)))
+  print("the type of the first element in this list is %s" % str(type(final_encoder_states[0])))
+  assert FLAGS.decoder_state_initializer == "top_layer_mirror", "Haven't implemented the other cases yet for initializing decoder states."
   return [final_encoder_states[-1] for _ in xrange(num_decoder_layers)] #a list of LSTM State Tuples
 
   #HERE IS WHAT WILL EVENTUALLY GO HERE
@@ -112,6 +117,12 @@ def validate_attention_decoder_inputs(decoder_inputs, num_heads, attention_state
 #
 #TODO - modularize this to read from JSON like I did with image project
 def decoder_rnn(attn_input, hidden_states_stack, num_layers=None):
+
+  print("in decoder rnn")
+  print(type(hidden_states_stack))
+  print(type(hidden_states_stack[0]))
+  print(hidden_states_stack[0].get_shape())
+
 
   if num_layers != len(hidden_states_stack):
     raise ValueError("expected %d hidden states. instead only see %d hidden states" % (num_layers, len(hidden_states_stack)))
@@ -311,10 +322,11 @@ def attention_decoder(decoder_inputs,
       Depending on the bucket size, input_size will be a padded sequence of whatever
       length the target language bucket size is. 
 
-    final_encoder_states: The initial decoder state. This can be tricky, because the
-      architecture of the encoder and the decoder might differ, therefore a 1:1 mirror
-      cannot be made where you simply initialize the decoder state to the last state of
-      the encoder.
+    final_encoder_states: The initial decoder state will be calculated from this.
+      This will be a list of LSTMStateTuples or GRU States, and this list might well
+      only have one element if the network is one layer deep. The indexes refer
+      to the cell depths. final_encoder_state[1] would be an LSTMStateTuple for layer 2's
+      lstm cell.
 
       One alternative is to pass the final state of the encoder and use this as the
       initial state of each stack of the decoder.
@@ -425,7 +437,6 @@ def attention_decoder(decoder_inputs,
     hidden_states = initialize_decoder_states_from_final_encoder_states(final_encoder_states, num_decoder_layers)
 
     #hidden_states = [final_encoder_states[-1] for _ in xrange(num_decoder_layers)] #a list of LSTM State Tuples
-
 
     #we need to store the batch size of the decoder inputs to use later for reshaping.
     # because these come in as a list of tensors, just take the first one.
