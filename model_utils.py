@@ -173,7 +173,6 @@ def _verify_recurrent_stack_architecture(stack_json):
 
   #now that we are all done, we should probably check that the final output layer isn't a list of outputs.
   #this is because this needs to be fed to the output projection.
-  assert len(output_sizes[last_layer]) == 1, "The length of the final layer's output size list is %d. This is likely because the layer is bidirectional, and the output muerge mode is not concat or sum. It needs to be combined because the output projection expects one tensor as input." % len(output_sizes[last_layer])
   assert len(output_sizes.keys()) == cur_layer_index, "Expected an output size key for each layer processed. Have %d keys but final layer index reads %d" % (len(output_sizes.keys()), cur_layer_index) #sanity check, +1 because cur_layer_index start at 0
   return True
 
@@ -284,7 +283,7 @@ def run_model(encoder_inputs,
     #then we run the decoder.
     return attention_decoder.embedding_attention_decoder(
           decoder_inputs,
-          encoder_states, #this is likely a list of LSTMStateTuple
+          encoder_states, #this is a LIST of LSTMStateTuples or GRU States
           attention_states,
           num_decoder_symbols,
           embedding_size,

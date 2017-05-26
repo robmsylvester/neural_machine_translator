@@ -304,7 +304,7 @@ def run_bahdanu_attention_mechanism(query_state,
 
 def attention_decoder(decoder_inputs,
                       final_encoder_states,
-                      attention_states,
+                      attention_states, #This is a LIST
                       output_size=None,
                       num_heads=1,
                       loop_function=None,
@@ -325,8 +325,8 @@ def attention_decoder(decoder_inputs,
     final_encoder_states: The initial decoder state will be calculated from this.
       This will be a list of LSTMStateTuples or GRU States, and this list might well
       only have one element if the network is one layer deep. The indexes refer
-      to the cell depths. final_encoder_state[1] would be an LSTMStateTuple for layer 2's
-      lstm cell.
+      to the cell depths, ie, final_encoder_state[1] would be an LSTMStateTuple for layer 2's
+      lstm cell state in the final layer of the encoder.
 
       One alternative is to pass the final state of the encoder and use this as the
       initial state of each stack of the decoder.
@@ -378,6 +378,22 @@ def attention_decoder(decoder_inputs,
       from the input.
   """
 
+  assert isinstance(final_encoder_states, (list)), "Final encoder states must be a list"
+
+
+  #This is where you left off
+  #This is where you left off
+  #This final encoder states is a LIST of LSTMStateTuples, so it needs to be treated as such in the below implementaiton
+  # Try out various json architecutre tests.
+  # Clean some of this shit code.
+
+
+
+
+
+
+
+
 
 
   #TODO - introduce manning's attention mechanism that scores h_t * (W*h_s) instead of this version
@@ -406,6 +422,8 @@ def attention_decoder(decoder_inputs,
     # these need to be reshaped for a convolutional operation that represents the 
     reshaped_attention_states = array_ops.reshape(attention_states,
                                [-1, attn_length, 1, attn_size])
+
+    print("reshaped attention states have shape %s" % str(reshaped_attention_states.get_shape()))
 
     #print("the attention decoder has reshaped the attention state to size " + str(reshaped_attention_states.get_shape()))
 
@@ -550,15 +568,13 @@ def embedding_attention_decoder(decoder_inputs,
 
   Args:
     decoder_inputs: A list of 1D batch-sized int32 Tensors (decoder inputs).
-    initial_state: 2D Tensor [batch_size x cell.state_size].
 
+    initial_state: 2D Tensor [batch_size x cell.state_size].
 
     attention_states: 3D Tensor [batch_size x attn_length x attn_size]
     The attention length is most likely going to be one. The attention size will be whatever the output size of
     the LSTM was at the top layer of the encoder. If this layer is bidirectional, then it will be a concatenation
     of these two outputs.
-
-
 
     cell: tf.nn.rnn_cell.RNNCell defining the cell function.
     num_symbols: Integer, how many symbols come into the embedding.
@@ -605,15 +621,15 @@ def embedding_attention_decoder(decoder_inputs,
   #print(type(output_projection[1]))
   #print("var scope of w_t from custom contrib is " + str(output_projection[0].get_variable_scope().name))
 
-
-  print("***********************************POOP")
-  print(len(initial_state))
-  print(type(initial_state))
-
-  print("reached embedding attention decoder")
   print("the initial cell state for this attention decoder is the encoder state from the last run of the encoder, which has shape %s" % str(initial_state[0].get_shape()))
   print("the initial hidden state for this attention decoder is the encoder state from the last run of the encoder, which has shape %s" % str(initial_state[1].get_shape()))
   print("the reshaped attention states from the encoder outputs have shape %s" % str(attention_states.get_shape()))
+
+
+
+  #TODO - reached this point where the incoming attention states are a list of LSTMStateTuples
+  # However, these get passed on to the attention_decoder as a list, and the attention_decoder isn't looking for that.
+
 
   if output_projection is not None:
     proj_biases = ops.convert_to_tensor(output_projection[1], dtype=dtype)
@@ -632,7 +648,7 @@ def embedding_attention_decoder(decoder_inputs,
     ]
     return attention_decoder(
         emb_inp,
-        initial_state,
+        initial_state, #this is a LIST, make changes accordingly
         attention_states,
         output_size=None,
         num_heads=num_heads,

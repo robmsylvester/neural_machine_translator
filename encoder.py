@@ -39,6 +39,7 @@ def run_encoder_NEW(encoder_json,
                     encoder_inputs,
                     num_encoder_symbols,
                     embedding_size,
+                    nematus_state_values=False, #TODO
                     dtype=None):
 
   # embeddings need to become non-updated-by-backprop embeddings from unsupervised glove, word2vec, or fasttext options
@@ -74,6 +75,7 @@ def run_encoder_NEW(encoder_json,
       print("encoder is analyzing layer %s" % layer_name)
 
       with variable_scope.variable_scope(layer_name) as scope:
+        
         #cell outputs and states are created. if unidirectional gru or lstm, out is still a list.
         #if bidirectional, it is a list of two tensors, unless they are concatenated
         cell_outputs[layer_name] = []
@@ -127,6 +129,7 @@ def run_encoder_NEW(encoder_json,
           cf = _create_encoder_cell(layer_parameters)
           cb = _create_encoder_cell(layer_parameters)
           out_fb, out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf, cb, inputs, dtype=dtype)
+          print("bidirectional rnn ran.\n\ttype of out_fb is %s\n\ttype of out_f is %s\n\ttype of out_b is %s\n\ttype of state_f is %s\n\ttype of state_b is %s" % (str(type(out_fb)), str(type(out_f)), str(type(out_b)), str(type(state_f)), str(type(state_b))))
           #print("shape of out_forward for layer %s is %s " % (layer_name, str(out_f.get_shape())))
 
           #store the outputs according to how they have to be merged.
@@ -135,22 +138,24 @@ def run_encoder_NEW(encoder_json,
           #TODO - remove these checks form every encoder pass
           if layer_parameters['output_merge_mode'] == 'concat':
             #assert out_f[0].get_shape().ndims == 2
-            cell_outputs[layer_name].append(out_fb)
+            cell_outputs[layer_name] = [out_fb]
           elif layer_parameters['output_merge_mode'] == 'sum':
             #assert out_f[0].get_shape().ndims == 2
-            cell_outputs[layer_name].append(tf.unstack(tf.add_n([out_f, out_b]))) #unstack recreates a list of length bucket_length of tensors with shape (batch_size, hidden_size)
+            cell_outputs[layer_name] = [tf.unstack(tf.add_n([out_f, out_b]))] #unstack recreates a list of length bucket_length of tensors with shape (batch_size, hidden_size)
           else:
-            cell_outputs[layer_name].append(out_f)
-            cell_outputs[layer_name].append(out_b)
+            cell_outputs[layer_name] = [out_f, out_b]
 
-          #The state is always the same for bidirectional layers, and we will concatenate it later if its the top layer
-          cell_states[layer_name].append([state_f,state_b])
+          #out_f is a list, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
+          cell_states[layer_name] = [state_f,state_b]
 
         else:
           cf = _create_encoder_cell(layer_parameters)
+
+          #out_f is a list, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
           out_f, state_f = core_rnn.static_rnn(cf, inputs, dtype=dtype)
-          cell_outputs[layer_name].append(out_f)
-          cell_states[layer_name].append([state_f])
+          print("unidirectional rnn ran.\n\ttype of out_f is %s\n\ttype of state_f is %s" % (str(type(out_f)),str(type(state_f))))
+          cell_outputs[layer_name] = [out_f]
+          cell_states[layer_name] = [state_f]
 
       current_layer += 1
 
@@ -175,31 +180,55 @@ def run_encoder_NEW(encoder_json,
     if FLAGS.decoder_state_initializer == 'nematus':
       raise NotImplementedError, "Haven't written the nematus decoder state initializer yet, and currently this function only returns and tracks top-level states in the loop."
 
-    #stack_states = tf.cond( len(cell_states[layer_name]) == 2,
-    #  lambda: tf.concat(cell_states[layer_name], axis=1),
-    #  lambda: cell_states[layer_name][0])
+    stack_output = cell_outputs[layer_name]
+    stack_states = cell_states[layer_name]
 
+    #if len(cell_states[layer_name]) == 2:
+    #  stack_states = [tf.concat(cell_states[layer_name], axis=1)] #returns a list of length 1
+    #elif len(cell_states[layer_name]) == 1:
+    #  stack_states = cell_states[layer_name][0][0] #returns a list of length 1
+    #else:
+    #  raise ValueError, "Expected 1 or 2 total output tensors in list of top layer of encoder stack states"
 
-    #TODO - fix the type problems here. Look at this below
-    #stack_output is a list/tensor, and stack_states is a tensor. this is dog shit. they should all be a list of tensors, every time.
-    if len(cell_outputs[layer_name]) == 2:
-      stack_output = tf.concat(cell_outputs[layer_name], axis=1) #returns a tensor. THIS IS BAD RIGHT NOW, needs to be a list
-    elif len(cell_outputs[layer_name]) == 1:
-      stack_output = cell_outputs[layer_name][0] #returns a list
-    else:
-      raise ValueError, "Expected 1 or 2 total output tensors in list of top layer of encoder stack outputs"
+    print("The length for stack output list is %d" % len(stack_output))
+    print("The length for stack states list is %d" % len(stack_states))
+    print("The first of these stack outputs a list of length %d with elements shaped %s" % (len(stack_output[0]), str(stack_output[0][0].get_shape())))
 
-    if len(cell_states[layer_name]) == 2:
-      stack_states = tf.concat(cell_states[layer_name], axis=1) #returns a tensor
-    elif len(cell_states[layer_name]) == 1:
-      stack_states = cell_states[layer_name][0][0] #returns a tensor
-    else:
-      raise ValueError, "Expected 1 or 2 total output tensors in list of top layer of encoder stack states"
-
-    print("The type for stack states is %s" % type(stack_states) )
+    #This output should be a list with one element
     return stack_output, stack_states
 
-#TODO - modularize this from javascript object and replace with the functions above
+
+# Concatenation of encoder outputs to put attention on.
+# TODO - encoder hidden size here is written here instead of output_size. NEED TO PASS NEW PARAMETER BECAUSE TOP LAYER MIGHT BE BIDIRECTIONAL
+# done this way because it is assumed top layer is not bidirectional, or otherwise
+# have any reason to use a different variable.
+def get_attention_state_from_encoder_outputs(encoder_outputs,
+                                            scope=None,
+                                            dtype=None):
+  with variable_scope.variable_scope(scope or "attention_from_encoder_outputs", dtype=dtype) as scope:
+    assert isinstance(encoder_outputs, (list)), "Encoder outputs must be a python list. Instead it is of type %s" % str(type(encoder_outputs))
+    print("Length of encoder outputs is %d" % len(encoder_outputs))
+    dtype=scope.dtype
+    print("get attention state from encoder outputs has been called.")
+    top_states = [array_ops.reshape(enc_out, [-1, 1, FLAGS.encoder_hidden_size]) for enc_out in encoder_outputs]
+    print("top states has a total of %d tensors" % len(top_states))
+    print("the first of these tensors has shape %s" % str(top_states[0].get_shape()))
+    attention_states = array_ops.concat(top_states, 1) #does this need to be axis=2
+    print("after concatenating, the attention states are shape %s" % str(attention_states.get_shape()))
+    return attention_states 
+
+
+
+
+
+
+
+
+
+
+
+"""
+
 def run_encoder_DEPRECATED_DELETE_THIS(encoder_inputs,
             num_encoder_symbols,
             embedding_size,
@@ -285,20 +314,4 @@ def run_encoder_DEPRECATED_DELETE_THIS(encoder_inputs,
     assert type(encoder_state) is core_rnn_cell_impl.LSTMStateTuple, "encoder_state should be an LSTMStateTuple. state is tuple is now true by default in TF."
     assert len(encoder_outputs) == len(encoder_inputs), "encoder input length (%d) should equal encoder output length(%d)" % (len(encoder_inputs), len(encoder_outputs))
     return encoder_outputs, encoder_state
-
-# Concatenation of encoder outputs to put attention on.
-# TODO - encoder hidden size here is written here instead of output_size. NEED TO PASS NEW PARAMETER BECAUSE TOP LAYER MIGHT BE BIDIRECTIONAL
-# done this way because it is assumed top layer is not bidirectional, or otherwise
-# have any reason to use a different variable.
-def get_attention_state_from_encoder_outputs(encoder_outputs,
-                                            scope=None,
-                                            dtype=None):
-  with variable_scope.variable_scope(scope or "attention_from_encoder_outputs", dtype=dtype) as scope:
-    dtype=scope.dtype
-    print("get attention state from encoder outputs has been called.")
-    top_states = [array_ops.reshape(enc_out, [-1, 1, FLAGS.encoder_hidden_size]) for enc_out in encoder_outputs]
-    print("top states has a total of %d tensors" % len(top_states))
-    print("the first of these tensors has shape %s" % str(top_states[0].get_shape()))
-    attention_states = array_ops.concat(top_states, 1)
-    print("after concatenating, the attention states are shape %s" % str(attention_states.get_shape()))
-    return attention_states 
+"""
