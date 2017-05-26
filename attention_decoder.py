@@ -326,10 +326,10 @@ def attention_decoder(decoder_inputs,
       This will be a list of LSTMStateTuples or GRU States, and this list might well
       only have one element if the network is one layer deep. The indexes refer
       to the cell depths, ie, final_encoder_state[1] would be an LSTMStateTuple for layer 2's
-      lstm cell state in the final layer of the encoder.
+      lstm cell state in the final layer of the encoder. If using GRU's, then final_encoder_states[4]
+      would be the final hidden state for the 5th layer GRU in the encoder.
 
-      One alternative is to pass the final state of the encoder and use this as the
-      initial state of each stack of the decoder.
+    
 
   Argumentss:
     decoder_inputs: A list of 2D Tensors [batch_size x input_size].
@@ -380,20 +380,13 @@ def attention_decoder(decoder_inputs,
 
   assert isinstance(final_encoder_states, (list)), "Final encoder states must be a list"
 
+  #If LSTM assert all are lstm state tuples, otherwise gru
 
   #This is where you left off
   #This is where you left off
-  #This final encoder states is a LIST of LSTMStateTuples, so it needs to be treated as such in the below implementaiton
+  #This final encoder states is a LIST of LSTMStateTuples, so it needs to be treated as such in the below implementation
   # Try out various json architecutre tests.
   # Clean some of this shit code.
-
-
-
-
-
-
-
-
 
 
   #TODO - introduce manning's attention mechanism that scores h_t * (W*h_s) instead of this version
@@ -403,8 +396,6 @@ def attention_decoder(decoder_inputs,
 
     #TODO - some assertion about the lstm state tuple only being there if we are indeed dealing with an lstm, not gru
     print("Reached the attention decoder. The type of the initial state is %s" % str(type(final_encoder_states)))
-    print("Reached the attention decoder. The shape of initial state 0-0 is %s" % str((final_encoder_states[0][0].get_shape())))
-    print("Reached the attention decoder. The shape of initial state 1-1 is %s" % str((final_encoder_states[1][1].get_shape())))
 
     #verify we have known shapes and nonzero inputs
     attn_length, attn_size = validate_attention_decoder_inputs(decoder_inputs, num_heads, attention_states)

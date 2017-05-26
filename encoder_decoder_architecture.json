@@ -35,7 +35,7 @@
 				"dropout_keep_prob" : 1.0,
 				"init_forget_bias" : 0.0,
 				"input_layers" : ["encoder0", "encoder1"],
-				"output_merge_mode" : "sum",
+				"output_merge_mode" : false,
 				"input_merge_mode" : "sum"
 			}
 		}

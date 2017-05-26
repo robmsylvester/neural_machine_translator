@@ -265,25 +265,26 @@ def run_model(encoder_inputs,
     #                                        embedding_size,
     #                                        dtype=dtype)
 
-    encoder_output, encoder_states = encoder.run_encoder_NEW(encoder_architecture,
-                                        encoder_inputs,
-                                        num_encoder_symbols,
-                                        embedding_size,
-                                        dtype=dtype)
 
+    #encoder outputs are a list of length batch_size
 
+    final_top_encoder_outputs, final_encoder_states = encoder.run_encoder_NEW(encoder_architecture,
+                                                                              encoder_inputs,
+                                                                              num_encoder_symbols,
+                                                                              embedding_size,
+                                                                              dtype=dtype)    
 
     #Then we create an attention state by reshaping the encoder outputs. This amounts to creating an additional
     #dimension, namely attention_length, so that our attention states are of shape [batch_size, atten_len=1, atten_size=size of last lstm output]
     #these attention states are used in every calculation of attention during the decoding process
     #we will use the STATE output from the decoder network as a query into the attention mechanism.
-    attention_states = encoder.get_attention_state_from_encoder_outputs(encoder_output,
+    attention_states = encoder.get_attention_state_from_encoder_outputs(final_top_encoder_outputs,
                                                                 dtype=dtype)
 
     #then we run the decoder.
     return attention_decoder.embedding_attention_decoder(
           decoder_inputs,
-          encoder_states, #this is a LIST of LSTMStateTuples or GRU States
+          final_encoder_states, #this is a LIST of LSTMStateTuples or GRU States
           attention_states,
           num_decoder_symbols,
           embedding_size,

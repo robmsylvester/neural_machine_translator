@@ -64,23 +64,16 @@ def run_encoder_NEW(encoder_json,
 
     print("the embedded encoder inputs each have shape %s, and there are %d of them in the list" % (str(embedded_encoder_inputs[0].get_shape()), len(embedded_encoder_inputs)))
 
-
     current_layer = 0
     cell_outputs = OrderedDict() #indexed by layer name in json, which stores a dict with keys "output" and "state"
     cell_states = OrderedDict() 
 
     #TODO - this NEEDS to become dynamic rnn
-    #TODO - this is potentially buggy with a dict and iterating items. make this an ordered dict too from a layer up
-    for layer_name, layer_parameters in encoder_json["layers"].iteritems():
+    for layer_name, layer_parameters in encoder_json["layers"].iteritems(): #this is an ordered dict
       print("encoder is analyzing layer %s" % layer_name)
 
       with variable_scope.variable_scope(layer_name) as scope:
         
-        #cell outputs and states are created. if unidirectional gru or lstm, out is still a list.
-        #if bidirectional, it is a list of two tensors, unless they are concatenated
-        cell_outputs[layer_name] = []
-        cell_states[layer_name] = []
-
         #TODO, take this and the loop and refactor into a get_inputs function
         #first loop will get embeddings, later loops will use previous iteration outputs, plus any residual connections
         input_list = []
@@ -151,7 +144,7 @@ def run_encoder_NEW(encoder_json,
         else:
           cf = _create_encoder_cell(layer_parameters)
 
-          #out_f is a list, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
+          #out_f is a list of tensor outputs, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
           out_f, state_f = core_rnn.static_rnn(cf, inputs, dtype=dtype)
           print("unidirectional rnn ran.\n\ttype of out_f is %s\n\ttype of state_f is %s" % (str(type(out_f)),str(type(state_f))))
           cell_outputs[layer_name] = [out_f]
@@ -180,8 +173,14 @@ def run_encoder_NEW(encoder_json,
     if FLAGS.decoder_state_initializer == 'nematus':
       raise NotImplementedError, "Haven't written the nematus decoder state initializer yet, and currently this function only returns and tracks top-level states in the loop."
 
-    stack_output = cell_outputs[layer_name]
-    stack_states = cell_states[layer_name]
+    #We do this anyway outside of the if statement, because the concatenation won't do anything otherwise, and the unstack 
+    if len(cell_outputs[layer_name]) > 1:
+      print("WARNING - your top layer cell outputs more than a single tensor at each time step. Perhaps it is bidirectional with no output merge mode specified. These tensors will be concatenated along axis 1. You should change this in the JSON to be 'concat' for readability, or 'sum' if you want the tensors element-wise added.")
+    
+    stack_output = tf.unstack(tf.concat(cell_outputs[layer_name], axis=1))
+    stack_states = [ cell_states[l] for l in cell_states ] # list of lists of states
+
+    print("length of stack states is %d" % len(stack_states))
 
     #if len(cell_states[layer_name]) == 2:
     #  stack_states = [tf.concat(cell_states[layer_name], axis=1)] #returns a list of length 1
@@ -189,10 +188,6 @@ def run_encoder_NEW(encoder_json,
     #  stack_states = cell_states[layer_name][0][0] #returns a list of length 1
     #else:
     #  raise ValueError, "Expected 1 or 2 total output tensors in list of top layer of encoder stack states"
-
-    print("The length for stack output list is %d" % len(stack_output))
-    print("The length for stack states list is %d" % len(stack_states))
-    print("The first of these stack outputs a list of length %d with elements shaped %s" % (len(stack_output[0]), str(stack_output[0][0].get_shape())))
 
     #This output should be a list with one element
     return stack_output, stack_states
