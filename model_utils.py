@@ -238,6 +238,7 @@ def run_model(encoder_inputs,
               decoder_inputs,
               encoder_architecture,
               decoder_architecture,
+              decoder_state_initializer,
               num_encoder_symbols,
               num_decoder_symbols,
               embedding_size,
@@ -283,6 +284,8 @@ def run_model(encoder_inputs,
 
     #then we run the decoder.
     return attention_decoder.embedding_attention_decoder(
+          decoder_architecture,
+          decoder_state_initializer,
           decoder_inputs,
           final_encoder_states, #this is a LIST of LSTMStateTuples or GRU States
           attention_states,

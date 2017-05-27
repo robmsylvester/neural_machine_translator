@@ -143,6 +143,7 @@ class EncoderDecoderAttentionModel(object):
           decoder_inputs,
           self.encoder_architecture,
           self.decoder_architecture,
+          decoder_state_initializer=FLAGS.decoder_state_initializer,
           num_encoder_symbols=source_vocab_size,
           num_decoder_symbols=target_vocab_size,
           embedding_size=FLAGS.encoder_embedding_size,

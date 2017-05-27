@@ -65,7 +65,7 @@ def run_encoder_NEW(encoder_json,
     print("the embedded encoder inputs each have shape %s, and there are %d of them in the list" % (str(embedded_encoder_inputs[0].get_shape()), len(embedded_encoder_inputs)))
 
     current_layer = 0
-    cell_outputs = OrderedDict() #indexed by layer name in json, which stores a dict with keys "output" and "state"
+    cell_outputs = OrderedDict() #indexed by layer name in json
     cell_states = OrderedDict() 
 
     #TODO - this NEEDS to become dynamic rnn
@@ -150,6 +150,7 @@ def run_encoder_NEW(encoder_json,
           cell_outputs[layer_name] = [out_f]
           cell_states[layer_name] = [state_f]
 
+      top_layer = layer_name # just for readability
       current_layer += 1
 
     #end main loop
@@ -174,13 +175,14 @@ def run_encoder_NEW(encoder_json,
       raise NotImplementedError, "Haven't written the nematus decoder state initializer yet, and currently this function only returns and tracks top-level states in the loop."
 
     #We do this anyway outside of the if statement, because the concatenation won't do anything otherwise, and the unstack 
-    if len(cell_outputs[layer_name]) > 1:
+    if len(cell_outputs[top_layer]) > 1:
       print("WARNING - your top layer cell outputs more than a single tensor at each time step. Perhaps it is bidirectional with no output merge mode specified. These tensors will be concatenated along axis 1. You should change this in the JSON to be 'concat' for readability, or 'sum' if you want the tensors element-wise added.")
     
-    stack_output = tf.unstack(tf.concat(cell_outputs[layer_name], axis=1))
+    stack_output = tf.unstack(tf.concat(cell_outputs[top_layer], axis=1))
     stack_states = [ cell_states[l] for l in cell_states ] # list of lists of states
 
     print("length of stack states is %d" % len(stack_states))
+    print("top stack state is type %s" % str(type(stack_states[-1])))
 
     #if len(cell_states[layer_name]) == 2:
     #  stack_states = [tf.concat(cell_states[layer_name], axis=1)] #returns a list of length 1
@@ -205,6 +207,8 @@ def get_attention_state_from_encoder_outputs(encoder_outputs,
     print("Length of encoder outputs is %d" % len(encoder_outputs))
     dtype=scope.dtype
     print("get attention state from encoder outputs has been called.")
+
+    #THIS IS BUGGY, because top layer might be bidirectional
     top_states = [array_ops.reshape(enc_out, [-1, 1, FLAGS.encoder_hidden_size]) for enc_out in encoder_outputs]
     print("top states has a total of %d tensors" % len(top_states))
     print("the first of these tensors has shape %s" % str(top_states[0].get_shape()))
