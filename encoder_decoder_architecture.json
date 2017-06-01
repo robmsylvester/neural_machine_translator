@@ -29,7 +29,7 @@
 			"encoder2": {
 				"lstm": true,
 				"peepholes" : false,
-				"bidirectional" : true,
+				"bidirectional" : false,
 				"expected_input_size" : 512,
 				"hidden_size" : 512,
 				"dropout_keep_prob" : 1.0,
@@ -70,7 +70,7 @@
 			"decoder2": {
 				"lstm": true,
 				"peepholes" : false,
-				"bidirectional" : true,
+				"bidirectional" : false,
 				"expected_input_size" : 512,
 				"hidden_size" : 512,
 				"dropout_keep_prob" : 1.0,

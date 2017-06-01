@@ -91,7 +91,7 @@ def _create_output_projection(target_size,
   biases = tf.get_variable("output_projection_biases", [target_size], dtype=tf.float32)
   return (weights, biases, weights_t)
 
-def _verify_recurrent_stack_architecture(stack_json):
+def _verify_recurrent_stack_architecture(stack_json, top_bidirectional_layer_allowed=False):
   permitted_input_merge_modes = [False,'concat','sum'] #when multiple layers connect to an LSTM/GRU, what do we do with these inputs? concat or sum, for now
   permitted_unidirectional_output_merge_modes = [False] #when a unidirectional LSTM has outputs for each time step, we dont have anything special to do. This is just for readability
   permitted_bidirectional_output_merge_modes = [False,'concat','sum']
@@ -174,6 +174,9 @@ def _verify_recurrent_stack_architecture(stack_json):
   #now that we are all done, we should probably check that the final output layer isn't a list of outputs.
   #this is because this needs to be fed to the output projection.
   assert len(output_sizes.keys()) == cur_layer_index, "Expected an output size key for each layer processed. Have %d keys but final layer index reads %d" % (len(output_sizes.keys()), cur_layer_index) #sanity check, +1 because cur_layer_index start at 0
+  if not top_bidirectional_layer_allowed and stack_json["layers"][last_layer]["bidirectional"] == True:
+    print("The top layer cannot be bidirectional. This is the default in the decoder until more support is added for dealing with the final output when the merge modes are not defined")
+    return False
   return True
 
 def _verify_decoder_state_initializer(stack_json, decoder_state_initializer):
@@ -181,8 +184,10 @@ def _verify_decoder_state_initializer(stack_json, decoder_state_initializer):
 
 def verify_encoder_decoder_stack_architecture(stack_json, decoder_state_initializer):
 
+  #TODO - the top bidirectional layer allowed argument can probably go away. but test it better before
+  # removing it here and in the actual method.
   print("Testing Encoder model architecture...")
-  if _verify_recurrent_stack_architecture(stack_json['encoder']):
+  if _verify_recurrent_stack_architecture(stack_json['encoder'], top_bidirectional_layer_allowed=True):
     print("Valid")
   else:
     print ("Invalid")
@@ -196,7 +201,7 @@ def verify_encoder_decoder_stack_architecture(stack_json, decoder_state_initiali
     return False
 
   print("Testing Decoder model architecture...")
-  if _verify_recurrent_stack_architecture(stack_json['decoder']):
+  if _verify_recurrent_stack_architecture(stack_json['decoder'], top_bidirectional_layer_allowed=False):
     print("Valid")
   else:
     print("Invalid")
@@ -268,7 +273,6 @@ def run_model(encoder_inputs,
 
 
     #encoder outputs are a list of length batch_size
-
     final_top_encoder_outputs, final_encoder_states = encoder.run_encoder_NEW(encoder_architecture,
                                                                               encoder_inputs,
                                                                               num_encoder_symbols,
@@ -287,7 +291,7 @@ def run_model(encoder_inputs,
           decoder_architecture,
           decoder_state_initializer,
           decoder_inputs,
-          final_encoder_states, #this is a LIST of LSTMStateTuples or GRU States
+          final_encoder_states, #this is a list of lists of LSTMStateTuples or GRU States
           attention_states,
           num_decoder_symbols,
           embedding_size,

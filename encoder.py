@@ -37,8 +37,8 @@ def _create_encoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
 #TODO - this needs to become dynamic instead of static rnn's, probably. depending on timer calls. fuckin' padding.
 def run_encoder_NEW(encoder_json,
                     encoder_inputs,
-                    num_encoder_symbols,
-                    embedding_size,
+                    num_encoder_symbols, #TODO - needs to be keyword arg because this may be coming from unsupervised embedding thats not in network
+                    embedding_size, #TODO - also needs to be keyword arg because this may be coming from unsupervised embedding thats not in network
                     nematus_state_values=False, #TODO
                     dtype=None):
 

@@ -16,6 +16,8 @@ from tensorflow.python.ops import nn_ops #TODO - make this not so fucking old
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.util import nest
 
+from collections import OrderedDict
+
 #from tensorflow.contrib.rnn.python.ops import core_rnn
 import custom_core_rnn as core_rnn
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell
@@ -26,6 +28,18 @@ linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
 
 FLAGS = tf.app.flags.FLAGS
 
+def _create_decoder_cell(json_layer_parameters):
+  if json_layer_parameters['lstm']:
+    return _create_decoder_lstm(json_layer_parameters['hidden_size'],
+                                json_layer_parameters['peepholes'],
+                                json_layer_parameters['init_forget_bias'],
+                                json_layer_parameters['dropout_keep_prob'])
+  else:
+    return _create_decoder_gru(json_layer_parameters['hidden_size'],
+                                json_layer_parameters['peepholes'],
+                                json_layer_parameters['init_forget_bias'],
+                                json_layer_parameters['dropout_keep_prob'])
+
 def _create_decoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_keep_prob):
   c = core_rnn_cell_impl.LSTMCell(hidden_size, #number of units in the LSTM
                 use_peepholes=use_peepholes,
@@ -35,19 +49,28 @@ def _create_decoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
     c = core_rnn_cell_impl.DropoutWrapper(c, output_keep_prob=dropout_keep_prob)
   return c
 
+def _create_decoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
+  raise NotImplementedError
+
 #This needs a lot more arguments...
-#final_encoder_states - a list of either LSTM State Tuples or GRU States
+#final_encoder_states - a list of lists containing 1 or 2 LSTM State Tuple/GRU States, depending on if that layer was bidirectional
 #num_decoder_layers, an integer representing the depth of the stack of LSTMS/GRU's, but just for sanity until likely removed.
 #returns the state for the decoder to start as a list itself, indexed by stack depth of the lstm or gru.
 def initialize_decoder_states_from_final_encoder_states(final_encoder_states, decoder_architecture, decoder_state_initializer):
 
   print("in initialize decoder states function. final encoder states is of type %s" % str(type(final_encoder_states)))
+  print("in initialize decoder states function. final encoder states -1 is of type %s" % str(type(final_encoder_states[-1])))
+  print("in initialize decoder states function. final encoder states -1 has length %d" % len(final_encoder_states[-1]))
+  print("in initialize decoder states function. final encoder states -1 has 0 element type %s" % str(type(final_encoder_states[-1][0])))
   
   if decoder_state_initializer == "top_layer_mirror":
 
     #will this won't necessarily work for all arbitrary geometries? i think so, UNLESS we mix GRU's with LSTM's
     #it also won't work if the top layer was bidirectional because we concatenated the states!
-    return [final_encoder_states[-1] for _ in xrange(decoder_architecture['num_layers'])] #a list of LSTM State Tuples
+
+    #TODO
+    #THIS WILL BREAK WITH BIDIRECTIONALITY IN THE TOP LAYER OF THE ENCODER OR ANYWHERE IN THE DECODER
+    return [final_encoder_states[-1] for _ in xrange(decoder_architecture['num_layers'])] #a list of lists of LSTM State Tuples
   else:
     print("Haven't implemented the other cases yet for initializing decoder states.")
     raise NotImplementedError, "No other decoder state initialization has been written"
@@ -66,12 +89,16 @@ def _prepare_top_encoder_state(top_states):
 #top states is a list of encoder states at the top layer of the encoder stack.
 # this list might be a single tensor representing the state of the cell, or an lstm state tuple
 
+  assert isinstance(top_states, (list)), "top states must be a list"
   is_lstm_tuple = top_states[0].__class__.__name__ == 'LSTMStateTuple' #otherwise it is a GRU
 
-#For now, this is more of a sanity check, but refactor this elsewhere
+  #For now, this is more of a sanity check, but refactor this elsewhere
   if len(top_states) == 2:
 
     if is_lstm_tuple:
+
+      assert top_states[0].__class__.__name__ == 'LSTMStateTuple'
+      assert top_states[1].__class__.__name__ == 'LSTMStateTuple'
       #print("WARNING - top encoder layer is bidirectional, so two final states will be concatenated.")
       new_c = tf.concat([top_states[0][0], top_states[1][0]], axis=1 ) #combine c from both LSTMS
       #print("new C has shape %s" % str(new_c.get_shape()))
@@ -80,15 +107,39 @@ def _prepare_top_encoder_state(top_states):
       top_encoder_state = core_rnn_cell_impl.LSTMStateTuple(new_c, new_h)
 
     else:
+      raise NotImplementedError, "Expected lstm state tuple. it isn't. gru not yet supported"
       top_encoder_state = tf.concat([top_states[0], top_states[1]], axis=1) #concat the bidirectional GRU hidden states
   
   elif len(top_states) == 1:
-    top_encoder_state = top_states[0]
+    top_encoder_state = top_states[0] #just a single lstm state tuple, so we're good
   else:
     raise ValueError("Too many states at top layer. Expected one or two. This isn't necessarily an error, but it is the case that there is no support yet written for an architecture that sees more than just a forward and backward state")
 
   return top_encoder_state
 
+def _convolve_attention_states(reshaped_attention_states, num_attention_heads, attention_size):
+  assert reshaped_attention_states.get_shape().ndims == 4, "Reshaped attention states must have 4 dimensions to be used in a convolution"
+  assert reshaped_attention_states.get_shape()[3] == attention_size, "The last dimension of the reshaped attention states must be the same as the attention size"
+
+  #these hidden features will be the reshaped attention states after being multiplied by a weight parameter, w1
+  #in the attention model. there will be three sets of weights
+  hidden_attention_states = []
+
+  for attention_head_idx in xrange(num_attention_heads):
+
+    #Here, a trick is used to use a 2d convolution after a reshape. we use the first set of weights in a convolutional network
+    #This is W_1 in the model above. Notice there is a separate set of parameters for each of the possible attention heads
+    attn_weights_1 = variable_scope.get_variable("attention_w1_head_%d" % attention_head_idx,
+                                    [1, 1, attention_size, attention_size])
+
+    #we build half of the term that is used for the attention mechanism calculation within the hyperbolic tangent 
+    #(W_1 * attention_states)
+    #we can do this outside of the attention mechanism call to save on some computation time
+    hidden_attention_states.append(
+      nn_ops.conv2d(reshaped_attention_states, attn_weights_1, [1, 1, 1, 1], "SAME")
+    )
+
+  return hidden_attention_states
 
 
 def _extract_argmax_and_embed(embedding,
@@ -205,41 +256,127 @@ def decoder_rnn(attn_input, hidden_states_stack, num_layers=None):
   return outputs3, hidden_states_stack, output_size
 
 
-def decoder_rnn_NEW(decoder_json, attn_input, hidden_states_stack, num_layers=None):
+def decoder_rnn_NEW(decoder_json, attn_input, hidden_states_stack, dtype=None):
 
 #Runs a decoder RNN for use with an attention mechanism. Note this is different than the encoder RNN
 # precisely because of this attention mechanism, and this is why we have the hidden states stack.
 # this stack will be used so that we can pass in an initial state for the different layers in the 
 # decoder stack when we are outputting.
 
-  pass
+  print("\t\tDUDE, we're in the decoder now!")
+  print("\t\ttype of hidden states stack is %s" % str(type(hidden_states_stack)))
+  print("\t\ttype of first element in this stack is %s" % str(type(hidden_states_stack[0])))
+  print("\t\ttype of first element in the first list of this stack is %s" % str(type(hidden_states_stack[0][0])))
+  print("\t\tshape of this first LSTM state tuple element is %s" % str(hidden_states_stack[0][0][0].get_shape()))
+  print("\t\tshape of this second LSTM state tuple element is %s" % str(hidden_states_stack[0][0][0].get_shape()))
+  with variable_scope.variable_scope("decoder", dtype=dtype) as scope:
 
+    current_layer = 0 #not needed really
+    cell_outputs = OrderedDict()
+    output_size = None
+    #new_cell_states = OrderedDict() #probably dont need this, write over hidden_states_stack
 
+    for layer_name, layer_parameters in decoder_json["layers"].iteritems(): #this is an ordered dict, so this is okay
+      print("\t\tdecoder is analyzing layer %d" % current_layer)
 
+      with variable_scope.variable_scope(layer_name) as scope:
+        print("\t\tdecoder is currently at scope %s" % scope.name)
 
-def convolve_attention_states(reshaped_attention_states, num_attention_heads, attention_size):
-  assert reshaped_attention_states.get_shape().ndims == 4, "Reshaped attention states must have 4 dimensions to be used in a convolution"
-  assert reshaped_attention_states.get_shape()[3] == attention_size, "The last dimension of the reshaped attention states must be the same as the attention size"
+        input_list = []
 
-  #these hidden features will be the reshaped attention states after being multiplied by a weight parameter, w1
-  #in the attention model. there will be three sets of weights
-  hidden_attention_states = []
+        #add to inputs the residual connections that connect to this layer
+        for candidate_layer_name, candidate_layer_output in cell_outputs.iteritems():
+          #print("layer %s is checking layer %s for inputs" %  (layer_name, candidate_layer_name))
+          if candidate_layer_name == layer_name: #layers don't have residual connections to themselves...
+            #print("skipping")
+            continue
+          elif candidate_layer_name in layer_parameters['input_layers']: #we will gather the layers that are marked in the architecture
+            #print("layer %s will use input from layer %s" % (layer_name, candidate_layer_name))
+            for layer_output in candidate_layer_output: #candidate_layer_output is always a list, sometimes with 1 element, sometimes with 2
+              input_list.append(layer_output)
 
-  for attention_head_idx in xrange(num_attention_heads):
+        print("\t\tlayer %s has %d total inputs in the input list." % (layer_name, len(input_list)))
 
-    #Here, a trick is used to use a 2d convolution after a reshape. we use the first set of weights in a convolutional network
-    #This is W_1 in the model above. Notice there is a separate set of parameters for each of the possible attention heads
-    attn_weights_1 = variable_scope.get_variable("attention_w1_head_%d" % attention_head_idx,
-                                    [1, 1, attention_size, attention_size])
+        #combine these residual inputs following this layer's merge mode
+        if layer_parameters['input_merge_mode'] == 'concat':
+          #inputs = tf.cond(len(input_list) > 1,
+          #  lambda:tf.concat(input_list, axis=1),
+          #  lambda:input_list[0])
+          print("\t\tthe shape of the input list BEFORE concatenating is shape %s and there are %d of them" % (str(inputs[0].get_shape()), len(input_list)))
+          inputs = tf.unstack(tf.concat(input_list, axis=2)) #we unstack to get a list, but needed for ONE time step?
+          print("\t\tthe shape of the inputs AFTER concatenating is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
+        elif layer_parameters['input_merge_mode'] == 'sum':
+          #inputs = tf.unstack(tf.add_n([i for i in input_list])) #TODO - correct here? unstack check
+          #inputs = tf.cond(len(input_list) > 1,
+          #  lambda:tf.unstack(tf.add_n(input_list)),
+          #  lambda:input_list[0])
+          inputs = tf.unstack(tf.add_n(input_list)) #NEED TO UNSTACK FOR ONE TIME STEP?
+          print("\t\tgoing to sum inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(inputs[0].get_shape())))
+          print("\t\tthe shape of the inputs after summing is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
+        else:
+          assert current_layer==0, "The input merge mode must be concat or sum for all other layers but 0" #remove this text
+          assert len(input_list)==0, "The current layer should be layer 0 if there are no inputs from other layers" #remove this test
+          print("\t\tthe attentive input has shape %s" % (str(attn_input.get_shape())))
+          inputs = [attn_input]
 
-    #we build half of the term that is used for the attention mechanism calculation within the hyperbolic tangent 
-    #(W_1 * attention_states)
-    #we can do this outside of the attention mechanism call to save on some computation time
-    hidden_attention_states.append(
-      nn_ops.conv2d(reshaped_attention_states, attn_weights_1, [1, 1, 1, 1], "SAME")
-    )
+        print("\t\tAbout to run the network layer. Inputs have shape %s and length %d" % (str(inputs[0].get_shape()), len(inputs)))
 
-  return hidden_attention_states
+                #create/get the cells, and run them
+        #this will give us the outputs, and we can combine them as necessary
+        #c stands for cell, out for outputs, f for forward, b for backward
+        if layer_parameters['bidirectional']:
+          assert isinstance(hidden_states_stack[current_layer], (list)), "Current layers hidden states stack must be a list because it is bidirectional"
+          assert len(hidden_states_stack[current_layer]) == 2, "Expected current layer to have two initial hidden states, but instead have %d" % len(hidden_states_stack)
+          cf = _create_decoder_cell(layer_parameters)
+          cb = _create_decoder_cell(layer_parameters)
+          out_fb, out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf,
+                                                                                    cb,
+                                                                                    inputs, #ONE TIME STEP
+                                                                                    initial_state_forward=hidden_states_stack[current_layer][0],
+                                                                                    initial_state_backward=hidden_states_stack[current_layer][1],
+                                                                                    dtype=dtype)
+          print("\t\tbidirectional rnn ran.\n\ttype of out_fb is %s\n\ttype of out_f is %s\n\ttype of out_b is %s\n\ttype of state_f is %s\n\ttype of state_b is %s" % (str(type(out_fb)), str(type(out_f)), str(type(out_b)), str(type(state_f)), str(type(state_b))))
+          #print("shape of out_forward for layer %s is %s " % (layer_name, str(out_f.get_shape())))
+
+          #store the outputs according to how they have to be merged.
+          #they will be a list with 2 elements, the forward and backward outputs. or, a list with one element, the concatenation or sum of the 2 elements.
+          
+          #TODO - remove these checks form every encoder pass
+          if layer_parameters['output_merge_mode'] == 'concat':
+            #assert out_f[0].get_shape().ndims == 2
+            cell_outputs[layer_name] = [out_fb]
+          elif layer_parameters['output_merge_mode'] == 'sum':
+            #assert out_f[0].get_shape().ndims == 2
+            cell_outputs[layer_name] = [tf.unstack(tf.add_n([out_f, out_b]))] #unstack recreates a list of length bucket_length of tensors with shape (batch_size, hidden_size)
+          else:
+            cell_outputs[layer_name] = [out_f, out_b]
+
+          #out_f is a list, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
+          hidden_states_stack[current_layer] = [state_f,state_b]
+          output_size = cf.output_size + cb.output_size
+
+        else:
+          cf = _create_decoder_cell(layer_parameters)
+          output_size = cf.output_size
+
+          #out_f is a list of tensor outputs, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
+          out_f, state_f = core_rnn.static_rnn(cf, inputs, initial_state=hidden_states_stack[current_layer][0], dtype=dtype) #ONE TIME STEP
+          print("\t\tunidirectional rnn ran.\n\ttype of out_f is %s\n\ttype of state_f is %s" % (str(type(out_f)),str(type(state_f))))
+          cell_outputs[layer_name] = [out_f]
+          hidden_states_stack[current_layer] = [state_f]
+
+      top_layer = layer_name # just for readability
+      current_layer += 1
+
+    #We do this anyway outside of the if statement, because the concatenation won't do anything otherwise, and the unstack 
+    if len(cell_outputs[top_layer]) > 1:
+      print("\t\tWARNING - your top layer cell outputs more than a single tensor at each time step. Perhaps it is bidirectional with no output merge mode specified. These tensors will be concatenated along axis 1. You should change this in the JSON to be 'concat' for readability, or 'sum' if you want the tensors element-wise added.")
+    
+    stack_output = tf.unstack(tf.concat(cell_outputs[top_layer], axis=1))
+
+    #we only care about the final output, but we need all the hidden cell states to pass back to this function later
+    return stack_output, hidden_states_stack, output_size
+
 
 def run_manning_attention_mechanism():
   raise NotImplementedError()
@@ -456,19 +593,6 @@ def attention_decoder(decoder_architecture,
     outputs = []
     prev = None
 
-    top_encoder_state_list = final_encoder_states[-1]
-    top_encoder_state = _prepare_top_encoder_state(top_encoder_state_list)
-
-
-    #we initialize the hidden states of the decoder a number of possible different ways, according to the literature.
-    # however, in all circumstances, we are just trying to steal some domain knowledge from the final encoder
-    # states, but how to choose other parameters is a very active area of research.
-    hidden_states = initialize_decoder_states_from_final_encoder_states(final_encoder_states,
-                                                                        decoder_architecture,
-                                                                        decoder_state_initializer)
-
-    #hidden_states = [final_encoder_states[-1] for _ in xrange(num_decoder_layers)] #a list of LSTM State Tuples
-
     #we need to store the batch size of the decoder inputs to use later for reshaping.
     # because these come in as a list of tensors, just take the first one.
     # this will store a TENSOR of one-dimension with the batch_size shape.
@@ -483,12 +607,17 @@ def attention_decoder(decoder_architecture,
     ]
 
     #store the attention parameter W_1 * attention_state
-    hidden_attention_states = convolve_attention_states(reshaped_attention_states, num_heads, attn_size)
+    hidden_attention_states = _convolve_attention_states(reshaped_attention_states, num_heads, attn_size)
 
     for a in attns:  # Ensure the second shape of attention vectors is set.
       a.set_shape([None, attn_size])
     if initial_state_attention:
-      attns = run_bahdanu_attention_mechanism(top_encoder_state,
+      #This is a lot of work for initial state attention, maybe we should just tell this thing to fuck off
+      #TODO = eventually this should get abstracted away probably
+      top_encoder_state_list = final_encoder_states[-1]
+      reshaped_top_encoder_state = _prepare_top_encoder_state(top_encoder_state_list)
+
+      attns = run_bahdanu_attention_mechanism(reshaped_top_encoder_state,
                                       reshaped_attention_states,
                                       hidden_attention_states,
                                       weights_v,
@@ -497,6 +626,15 @@ def attention_decoder(decoder_architecture,
                                       attn_length)
 
     #print("about to start enumerating decoder inputs. current scope is %s" % scope.name)
+
+
+    #We need to initialize the hidden states of the decoder before we start putting inputs into the network
+    #This can be done in many ways, so we call this off to another function.
+    # however, in all circumstances, we are just trying to steal some domain knowledge from the final encoder
+    # states, but how to choose other parameters, hoofta.
+    hidden_states = initialize_decoder_states_from_final_encoder_states(final_encoder_states,
+                                                                        decoder_architecture,
+                                                                        decoder_state_initializer)
 
     for i, inp in enumerate(decoder_inputs):
 
@@ -523,20 +661,26 @@ def attention_decoder(decoder_architecture,
       #Run the RNN through the decoder architecture
       #notice how hidden states is rewritten each time!
       #TODO - write this
-      raise NotImplementedError("Need to rewrite decoder now...")
-      decoder_output, hidden_states, output_size = decoder_rnn(attentive_input,
-                                                              hidden_states,
-                                                              num_layers=num_decoder_layers)
+      
+      #TODO - output_size is only written for the unidirectional case under the presumption the top decoder layer won't be bidirectional
+      #decoder_output, hidden_states, output_size = decoder_rnn(attentive_input,
+      #                                                        hidden_states,
+      #                                                        num_layers=num_decoder_layers)
 
-      #decoder_output, decoder_state, output_size = decoder_rnn_new(decoder_json,
-      #                                                            attentive_input,
-      #                                                            hidden_states,
-      #                                                            num_layers=num_decoder_layers)
+      #This is similar to the encoder mechanism we wrote earlier but the main difference
+      # (other than the whole-attention-mechanism thing) is that this decoder runs for ONE time step
+      decoder_output, decoder_state, output_size = decoder_rnn_NEW(decoder_architecture,
+                                                                  attentive_input,
+                                                                  hidden_states,
+                                                                  dtype=dtype)
 
-      #hidden states is a list LSTMStateTuples which each store the states for each layer of the decoder stack
+      #hidden states is a list of LSTMStateTuples which each store the states for each layer of the decoder stack
       #hidden_states[0] - lstmstatetuple storing (cell_state, hidden_state) for lowest layer of lstm stack
       #hidden_states[1] = lstmstatetuple storing .. for layer 1 of lstm stack
       #hidden_states[-1] = lstmstatetuple storing top layer of lstm stack
+
+      #TODO - this probably needs to become [-1][0] because this is a list of lists, so this assertion should catch it
+      assert hidden_states[-1].__class__.__name__ == 'LSTMStateTuple', "Expected hiddenstates -1 to have an lstm tuple"
       top_decoder_state = hidden_states[-1] #still decoder state will be an LSTMStateTuple
 
       # Run the attention mechanism.
