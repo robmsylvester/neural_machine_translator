@@ -46,7 +46,7 @@ def run_encoder_NEW(encoder_json,
   with variable_scope.variable_scope("encoder", dtype=dtype) as scope:
     dtype=scope.dtype
 
-    print("encoder inputs right now have length of %d and each has shape %s" % (len(encoder_inputs), str(encoder_inputs[0].get_shape())))
+    #print("encoder inputs right now have length of %d and each has shape %s" % (len(encoder_inputs), str(encoder_inputs[0].get_shape())))
 
     #create embeddings - this will eventually be moved elsewhere when the embeddings are no longer trained
     with variable_scope.variable_scope("embeddings") as scope:
@@ -62,7 +62,7 @@ def run_encoder_NEW(encoder_json,
       # them to be a sequence input for the lstm layers, so we reshape them back into a list of length bucket_size containing tensors of shape (batch_size, embed_size)
       embedded_encoder_inputs = tf.unstack(embedded_encoder_inputs)
 
-    print("the embedded encoder inputs each have shape %s, and there are %d of them in the list" % (str(embedded_encoder_inputs[0].get_shape()), len(embedded_encoder_inputs)))
+    #print("the embedded encoder inputs each have shape %s, and there are %d of them in the list" % (str(embedded_encoder_inputs[0].get_shape()), len(embedded_encoder_inputs)))
 
     current_layer = 0
     cell_outputs = OrderedDict() #indexed by layer name in json
@@ -70,7 +70,7 @@ def run_encoder_NEW(encoder_json,
 
     #TODO - this NEEDS to become dynamic rnn
     for layer_name, layer_parameters in encoder_json["layers"].iteritems(): #this is an ordered dict
-      print("encoder is analyzing layer %s" % layer_name)
+      #print("encoder is analyzing layer %s" % layer_name)
 
       with variable_scope.variable_scope(layer_name) as scope:
         
@@ -89,32 +89,32 @@ def run_encoder_NEW(encoder_json,
             for layer_output in candidate_layer_output: #candidate_layer_output is always a list, sometimes with 1 element, sometimes with 2
               input_list.append(layer_output)
 
-        print("layer %s has %d total inputs in the input list." % (layer_name, len(input_list)))
+        #print("layer %s has %d total inputs in the input list." % (layer_name, len(input_list)))
 
         #combine these residual inputs following this layer's merge mode
         if layer_parameters['input_merge_mode'] == 'concat':
           #inputs = tf.cond(len(input_list) > 1,
           #  lambda:tf.concat(input_list, axis=1),
           #  lambda:input_list[0])
-          print("the shape of the input list BEFORE concatenating is shape %s and there are %d of them" % (str(inputs[0].get_shape()), len(input_list)))
+          #print("the shape of the input list BEFORE concatenating is shape %s and there are %d of them" % (str(inputs[0].get_shape()), len(input_list)))
           inputs = tf.unstack(tf.concat(input_list, axis=2)) #we unstack to get a list
-          print("the shape of the inputs AFTER concatenating is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
+          #print("the shape of the inputs AFTER concatenating is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
         elif layer_parameters['input_merge_mode'] == 'sum':
           #inputs = tf.unstack(tf.add_n([i for i in input_list])) #TODO - correct here? unstack check
           #inputs = tf.cond(len(input_list) > 1,
           #  lambda:tf.unstack(tf.add_n(input_list)),
           #  lambda:input_list[0])
-          print("******************************************")
+          #print("******************************************")
           inputs = tf.unstack(tf.add_n(input_list))
-          print("going to sum inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(inputs[0].get_shape())))
-          print("the shape of the inputs after summing is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
+          #print("going to sum inputs into layer %s\nThe dimensionality of the first tensor in the input list is %s" % (layer_name, str(inputs[0].get_shape())))
+          #print("the shape of the inputs after summing is %s and there are %d of them" % (str(inputs[0].get_shape()), len(inputs)))
         else:
           assert current_layer==0, "The input merge mode must be concat or sum for all other layers but 0" #remove this text
           assert len(input_list)==0, "The current layer should be layer 0 if there are no inputs from other layers" #remove this test
           inputs = embedded_encoder_inputs
 
 
-        print("About to run the network layer. Inputs have shape %s and length %d" % (str(inputs[0].get_shape()), len(inputs)))
+        #print("About to run the network layer. Inputs have shape %s and length %d" % (str(inputs[0].get_shape()), len(inputs)))
         #create/get the cells, and run them
         #this will give us the outputs, and we can combine them as necessary
         #c stands for cell, out for outputs, f for forward, b for backward
@@ -122,7 +122,7 @@ def run_encoder_NEW(encoder_json,
           cf = _create_encoder_cell(layer_parameters)
           cb = _create_encoder_cell(layer_parameters)
           out_fb, out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf, cb, inputs, dtype=dtype)
-          print("bidirectional rnn ran.\n\ttype of out_fb is %s\n\ttype of out_f is %s\n\ttype of out_b is %s\n\ttype of state_f is %s\n\ttype of state_b is %s" % (str(type(out_fb)), str(type(out_f)), str(type(out_b)), str(type(state_f)), str(type(state_b))))
+          #print("bidirectional rnn ran.\n\ttype of out_fb is %s\n\ttype of out_f is %s\n\ttype of out_b is %s\n\ttype of state_f is %s\n\ttype of state_b is %s" % (str(type(out_fb)), str(type(out_f)), str(type(out_b)), str(type(state_f)), str(type(state_b))))
           #print("shape of out_forward for layer %s is %s " % (layer_name, str(out_f.get_shape())))
 
           #store the outputs according to how they have to be merged.
@@ -146,7 +146,7 @@ def run_encoder_NEW(encoder_json,
 
           #out_f is a list of tensor outputs, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
           out_f, state_f = core_rnn.static_rnn(cf, inputs, dtype=dtype)
-          print("unidirectional rnn ran.\n\ttype of out_f is %s\n\ttype of state_f is %s" % (str(type(out_f)),str(type(state_f))))
+          #print("unidirectional rnn ran.\n\ttype of out_f is %s\n\ttype of state_f is %s" % (str(type(out_f)),str(type(state_f))))
           cell_outputs[layer_name] = [out_f]
           cell_states[layer_name] = [state_f]
 
@@ -181,8 +181,8 @@ def run_encoder_NEW(encoder_json,
     stack_output = tf.unstack(tf.concat(cell_outputs[top_layer], axis=1))
     stack_states = [ cell_states[l] for l in cell_states ] # list of lists of states
 
-    print("length of stack states is %d" % len(stack_states))
-    print("top stack state is type %s" % str(type(stack_states[-1])))
+    #print("length of stack states is %d" % len(stack_states))
+    #print("top stack state is type %s" % str(type(stack_states[-1])))
 
     #if len(cell_states[layer_name]) == 2:
     #  stack_states = [tf.concat(cell_states[layer_name], axis=1)] #returns a list of length 1
@@ -204,24 +204,17 @@ def get_attention_state_from_encoder_outputs(encoder_outputs,
                                             dtype=None):
   with variable_scope.variable_scope(scope or "attention_from_encoder_outputs", dtype=dtype) as scope:
     assert isinstance(encoder_outputs, (list)), "Encoder outputs must be a python list. Instead it is of type %s" % str(type(encoder_outputs))
-    print("Length of encoder outputs is %d" % len(encoder_outputs))
+    #print("Length of encoder outputs is %d" % len(encoder_outputs))
     dtype=scope.dtype
-    print("get attention state from encoder outputs has been called.")
+    #print("get attention state from encoder outputs has been called.")
 
     #THIS IS BUGGY, because top layer might be bidirectional
     top_states = [array_ops.reshape(enc_out, [-1, 1, FLAGS.encoder_hidden_size]) for enc_out in encoder_outputs]
-    print("top states has a total of %d tensors" % len(top_states))
-    print("the first of these tensors has shape %s" % str(top_states[0].get_shape()))
+    #print("top states has a total of %d tensors" % len(top_states))
+    #print("the first of these tensors has shape %s" % str(top_states[0].get_shape()))
     attention_states = array_ops.concat(top_states, 1) #does this need to be axis=2
-    print("after concatenating, the attention states are shape %s" % str(attention_states.get_shape()))
+    #print("after concatenating, the attention states are shape %s" % str(attention_states.get_shape()))
     return attention_states 
-
-
-
-
-
-
-
 
 
 

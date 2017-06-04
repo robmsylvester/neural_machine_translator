@@ -350,22 +350,12 @@ def sequence_loss_by_example(logits,
       else:
         crossent = softmax_loss_function(target, logit)
 
-
-
-
-
-
       """
 
       ROB, YOU LEFT OFF HERE.
 
-      Find a way to get the target weight cross entropy gone for padded id words without explicitly storing it as a 
+      If possible, abstract this away to get the target weight cross entropy gone for padded id words without explicitly storing it as a 
       trainable variable in the model file
-
-
-
-
-
       """
       #if weight.value==0.:
       #  assert(target==data_utils.PAD_ID, "If weight is 0, target id should be pad_id")
@@ -377,10 +367,6 @@ def sequence_loss_by_example(logits,
      
       #print(weight.get_shape())
       log_perp_list.append(crossent * weight)
-
-
-
-
 
 
 
