@@ -299,6 +299,8 @@ def decode():
       # This is a greedy decoder - outputs are just argmaxes of output_logits.
       outputs = [int(np.argmax(logit, axis=1)) for logit in output_logits]
 
+      # TODO - BEAM SEARCH HERE
+
       # If there is an EOS symbol in outputs, cut them at that point.
       if vocabulary_utils.EOS_ID in outputs:
         outputs = outputs[:outputs.index(vocabulary_utils.EOS_ID)]

@@ -146,7 +146,9 @@ class EncoderDecoderAttentionModel(object):
           decoder_state_initializer=FLAGS.decoder_state_initializer,
           num_encoder_symbols=source_vocab_size,
           num_decoder_symbols=target_vocab_size,
+          embedding_algorithm=FLAGS.embedding_algorithm,
           embedding_size=FLAGS.encoder_embedding_size,
+          train_embeddings=FLAGS.train_embeddings or FLAGS.encoder_embedding_size == 'network', #TODO, obviously fix this
           output_projection=output_projection,
           feed_previous=do_decode,
           dtype=dtype)
@@ -216,7 +218,9 @@ class EncoderDecoderAttentionModel(object):
       session: tensorflow session to use.
       encoder_inputs: list of numpy int vectors to feed as encoder inputs.
       decoder_inputs: list of numpy int vectors to feed as decoder inputs.
-      target_weights: list of numpy float vectors to feed as target weights.
+      target_weights: list of numpy float vectors to feed as target weights. this is how much we care
+       about getting this particular token correct. naively, these are all 1, except padded words, which are 0
+       this will be deprecated in favor of a dynamic rnn.
       bucket_id: which bucket of the model to use.
       forward_only: whether to do the backward step or only forward.
 
@@ -294,6 +298,7 @@ class EncoderDecoderAttentionModel(object):
     if load_from_memory:
       return self.get_batch_from_memory(data, bucket_id)
     else:
+      raise NotImplementedError("Need to write get back from file method. use the memory flag now")
       return self.get_batch_from_file(data, bucket_id, source_path, target_path, max_size)
 
 
@@ -398,7 +403,6 @@ class EncoderDecoderAttentionModel(object):
     #out an extra dimension, so we don't want that, hence we pass an axis=0
     batch_encoder_inputs = [np.squeeze(i, axis=0) for i in np.split(encoder_input_as_array, encoder_size, axis=0)]
     batch_decoder_inputs = [np.squeeze(i, axis=0) for i in np.split(decoder_input_as_array, decoder_size, axis=0)]
-    end2 = time.time()
 
     #make sure they all match
     #for idx in xrange(encoder_size):

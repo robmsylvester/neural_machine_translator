@@ -3,10 +3,24 @@ import os
 import sys
 
 
-tf.app.flags.DEFINE_float("max_clipped_gradient", 5.0,
-                          "Clip gradients to this norm.")
+##===================Gradients and learning rate===================================
+#TODO - make this trainable and saveable so it doesn't reload at 0.5
+tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
 
-#this should probably be a larger number
+tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
+                          "Learning rate decays by this much.")
+
+tf.app.flags.DEFINE_float("minimum_learning_rate", 0.005, "Minimum learning rate")
+
+tf.app.flags.DEFINE_float("max_clipped_gradient", 5.0,
+                          "Clip gradients to a maximum of this this norm.")
+#==========================================================================================
+
+
+
+
+
+#this should probably be a larger number than 16
 tf.app.flags.DEFINE_integer("batch_size", 16,
                             "Batch size to use during training.")
 
@@ -51,17 +65,6 @@ tf.app.flags.DEFINE_integer("bucket_inference_sample_size", 1000000, "Only check
 tf.app.flags.DEFINE_integer("num_buckets", 3, "Will use this number to look up default bucket sizes, otherwise use this number to find good division of data with this many buckets")
 
 
-#Learning Rate Flags
-#TODO - make this trainable and saveable so it doesn't reload at 0.5
-tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
-#at 316,000 this was .0217
-
-tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
-                          "Learning rate decays by this much.")
-
-tf.app.flags.DEFINE_float("minimum_learning_rate", 0.005, "Minimum learning rate")
-#==========================================================================================
-
 
 #Dataset Flags
 tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
@@ -78,11 +81,30 @@ tf.app.flags.DEFINE_integer("train_offset", 0,
 
 #Embedding Flags for Encoder and Decoder
 #Was 1024, 512
-tf.app.flags.DEFINE_integer("encoder_embedding_size", 512,
+
+
+tf.app.flags.DEFINE_string("embedding_algorithm", "glove",
+                            "glove, fasttext, word2vec, or network. The first three are unsupervised trainers implemented by other programs. the latter is a network layer trained only by backprop")
+
+tf.app.flags.DEFINE_boolean("train_embeddings", True,
+                            "Whether or not to continue training the glove embeddings from backpropagation or to leave them be")
+
+
+
+
+
+
+
+tf.app.flags.DEFINE_integer("encoder_embedding_size", 200,
                             "Number of units in the embedding size of the encoder inputs. This will be used in a wrapper to the first layer")
 #Was 1024, 512
 tf.app.flags.DEFINE_integer("decoder_embedding_size", 512,
                             "Number of units in the embedding size of the encoder inputs. This will be used in a wrapper to the first layer")
+
+tf.app.flags.DEFINE_string("glove_embedding_file", "GloVe/build/rob_vectors_50it.txt",
+                            "The output file for Glove-trained word embeddings on the dataset.")
+
+
 #==========================================================================================
 
 
@@ -108,8 +130,8 @@ tf.app.flags.DEFINE_integer("decoder_hidden_size", 512,
 # 3. "bahdanu" - take the final state of the top layer of the encoder. if bidirectional, use the BACKWARD STATE ONLY
 #                this top state is then multiplied by a trained weight vector with size equal to the sum of the hidden
 #                size of each layer of the decoder. finally, this is passed through a hyperbolic tangent.
-#                this way, we can create a list of initial states to use in the decoder
-#                this approach will add a trainable weight vector to the parameters
+#                this way, we can create a list of initial states to use in the decoder.
+#                this approach will add a trainable weight vector to the parameters.
 #
 # 4. "nematus" - similar to bahdanu, except using a mean annotation of the hidden states across all time steps of the
 #                encoder, not just the final one, multiplied by the trained weight parameter. This does not use the backward direction only, but both
@@ -144,7 +166,7 @@ tf.app.flags.DEFINE_float("encoder_dropout_keep_probability", 1.0,
 tf.app.flags.DEFINE_float("decoder_dropout_keep_probability", 1.0,
                             "The keep probability to use in the dropout wrapper for LSTM's in the decoder. To disable dropout, just use 1.0")
 
-#Flesh this out
+#TODO - Flesh this out
 def flag_test():
     f = tf.app.flags.FLAGS
     #build flag tests for the rest of the flags for input checking. like this...

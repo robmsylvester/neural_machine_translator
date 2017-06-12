@@ -247,6 +247,8 @@ def run_model(encoder_inputs,
               num_encoder_symbols,
               num_decoder_symbols,
               embedding_size,
+              embedding_algorithm=None,
+              train_embeddings=True,
               num_heads=1,
               output_projection=None,
               feed_previous=False,
@@ -264,20 +266,15 @@ def run_model(encoder_inputs,
     #      then they are still in memory for each bucket. can probably do better and abstract it into the argument
     #      to run_model()
 
-    #First, we run the encoder on the inputs, which for now included the embedding transformation to the input 
-    #before entering the rnn. this returns an encoder state which is an LSTMStateTuple
-    #encoder_outputs, encoder_state = encoder.run_encoder(encoder_inputs,
-    #                                        num_encoder_symbols,
-    #                                        embedding_size,
-    #                                        dtype=dtype)
-
 
     #encoder outputs are a list of length batch_size
-    final_top_encoder_outputs, final_encoder_states = encoder.run_encoder_NEW(encoder_architecture,
-                                                                              encoder_inputs,
-                                                                              num_encoder_symbols,
-                                                                              embedding_size,
-                                                                              dtype=dtype)    
+    final_top_encoder_outputs, final_encoder_states = encoder.run_embedding_encoder(encoder_architecture,
+                                                                                    encoder_inputs,
+                                                                                    num_encoder_symbols,
+                                                                                    embedding_size,
+                                                                                    embedding_algorithm=embedding_algorithm,
+                                                                                    train_embeddings=train_embeddings,
+                                                                                    dtype=dtype)    
 
     #Then we create an attention state by reshaping the encoder outputs. This amounts to creating an additional
     #dimension, namely attention_length, so that our attention states are of shape [batch_size, atten_len=1, atten_size=size of last lstm output]

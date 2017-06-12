@@ -48,27 +48,63 @@ EOS_ID = 2
 UNK_ID = 3
 
 
+#Our vanilla tokenizer doesnt even use regex, because dealing with all the french characters
+# in the regex ended up being slower than just writing out a list of seperators and looping through them.
+# We already have text inputs that contain only lowercase words, so we simply split out on any and all
+# punctuation that appears in the dataset.
 def vanilla_ft_tokenizer(text):
-  #This function splits sentences into a list of tokens in a naive way targeted for two things:
-  # A - Using FastText word embeddings that expect lowercase words, no hyphens, no punctuation.
+    tokens = []
+    seperators = ("(",
+                  ")",
+                  "?",
+                  "!",
+                  "@",
+                  "#",
+                  "$",
+                  "%",
+                  "^",
+                  "&",
+                  "*",
+                  "[",
+                  "]",
+                  "'",
+                  '"',
+                  '~',
+                  ".",
+                  ",",
+                  ":",
+                  ";",
+                  "-",
+                  "_",
+                  "=",
+                  "+",
+                  "{",
+                  "}",
+                  "<",
+                  ">",
+                  "/",
+                  "\\",
+                  "|",
+                  "°")
+    
+    def split(txt, seps):
 
-  pattern = re.compile(b"([-.,\!?\"':;_)(])/")
-  tokens = []
+        for sep in seps:
+            txt = txt.replace(sep, " "+sep+" ")
+        return [i.strip() for i in txt.split(" ")]
 
-  #split by spaces
-  for split_by_space in text.strip().split():
-
-    #then by tokens
-    tokens.extend(pattern.split(split_by_space))
-
-  return [i for i in tokens if i]
+    #split by spaces
+    for split_by_space in text.strip().split():
+        tokens.extend(split(split_by_space,seperators))
+        
+    return [i for i in tokens if i]
 
 
 
 
 def clean_sentence(sentence, language="en"):
 
-  #always lowercase for everything, but that doesn't capture all the characters in french
+  #always lowercase for everything, but that doesn't capture all the characters in french, so we'll need to finish this up later explicitly.
   sentence = sentence.lower()
 
   #this awkward quotation mark makes an appearance sometimes in the WMT dataset. He can fuck right off.
@@ -105,6 +141,7 @@ def clean_sentence(sentence, language="en"):
     sentence = re.sub('Ü', 'ü', sentence)
     sentence = re.sub('Ù', 'ù', sentence)
     sentence = re.sub('Ç', 'ç', sentence)
+    sentence = re.sub('Œ', 'œ', sentence)
     sentence = re.sub('0', ' zéro ', sentence)
     sentence = re.sub('1', ' un ', sentence)
     sentence = re.sub('2', ' duex ', sentence)
@@ -116,17 +153,29 @@ def clean_sentence(sentence, language="en"):
     sentence = re.sub('8', ' huit ', sentence)
     sentence = re.sub('9', ' neuf ', sentence)
   else:
-    raise ValueError("clean_setnence() only has rules implemented for English and French. This isn't a horrible error. Basically,\
+    raise ValueError("clean_sentence() only has rules implemented for English and French. This isn't a horrible error. Basically,\
       write out commands for what to do with numbers. If using a FastText embedding, this means explicitly finding string representations\
-       for the numbers in the language. Write out any explicit commands for dealing with lowercase accented characters that Python's lower()\
+       for the numbers in the language (ie, for english, '9' means ' nine '. Write out any explicit commands for dealing with lowercase accented characters that Python's lower()\
        will not take care of.")
 
   return sentence
 
-
-
-
-
+#returns a python set with all characters appearing in a file. good for knowing how to tokenize
+def get_all_chars_in_data_file(file_name, progress=1000000):
+    charset = set()
+    read = 0
+    with open(file_name, 'rb') as f:
+        for line in f:
+            for ch in line:
+                charset.add(ch)
+            read += 1
+            if read % progress == 0:
+                print("read %d lines" % read)
+    #print len(charset)
+    #print("***************************")
+    #for char in charset:
+    #    print char
+    return charset
 
 
 
@@ -137,7 +186,7 @@ def clean_enfr_wmt_data(output_file,
 
   """
   This will go through and lowercase everything, make every number written out (ie, 45 becomes four five, not forty-five) 
-  We also explicitly lowercase silly french letters with silly little baguettes over them.
+  We also explicitly have to lowercase those silly french letters with silly little baguettes over them.
   """
   if gfile.Exists(output_file):
     print("Cleaned dataset file %s detected. Skipping cleaning" % output_file)
@@ -149,24 +198,32 @@ def clean_enfr_wmt_data(output_file,
 
   with gfile.GFile(input_file,mode='rb') as f:
     with gfile.GFile(output_file,mode='w') as out:
-      print("Cleaning dataset file %s using %s as a source language." % (input_file, language))
+      print("Cleaning dataset file %s to conform to translator conventions (ie, lowercase, proper tokenization, etc) using %s as the detected language.\nFor a large dataset like WMT, this might take an hour-plus. Go eat a sandwich." % (input_file, language))
       for line in f:
         read_counter += 1
         line = tf.compat.as_bytes(line)
         #print line
 
+        #we need to take care of casing, particularly with foreign characters, among other things.
         line = clean_sentence(line, language=language)
 
-        #Our word vector tokenizer in fasttext is admittedly shitty. he looks for whitespace, and thats it.
-        #So we will abstract this away by a tokenizer ourselves and writing into the clean file a separation
+        #Our word vector tokenizer in fasttext is admittedly shitty...looks for whitespace, and thats it.
+        #So we will abstract this away by a tokenizer of our own and create an entirely new file
         #of tokens by a single white space.
         tokens = vanilla_ft_tokenizer(line)
+        
         to_write = ''
         for token in tokens:
-          to_write += token + ' '
+          to_write += token + ' ' #append a space after each word
 
-        #We do NOT need to add an _EOS tag, because fast text will do this for us. We can just reference it in the trainer.
-        #Fasttext uses a </s> symbol for the end of sentences.
+        #
+        #
+        #             BIG TO DO  
+        #
+        #    It might be better to take care of the end of sentence tag here so we can conform to standards with the unsupervised layer.
+        #    For example, fasttext uses a </s> symbol for the end of sentences.
+        #
+        #We do NOT need to add an _EOS tag. We can just reference it in the trainer.
         to_write += '\n'
         
         #We should explicitly specify utf8 because of all the bytecode character above.
@@ -177,10 +234,6 @@ def clean_enfr_wmt_data(output_file,
           print("read %d lines" % read_counter)
   print("Done.\nClean output dataset file created at %s" % output_file)
   return output_file
-
-
-
-
 
 
 
@@ -248,17 +301,11 @@ def create_vocabulary(output_vocabulary_path, input_data_path, max_vocabulary_si
     print("Created vocabulary file with %d words.\nThe rate of unknown words for this vocabulary was %.4f" % (min(len(top_vocabulary),max_vocabulary_size), 1 - vocab_tokens / float(total_tokens)))
 
 
-
-
-
-
-
-
 def get_sentence_length_distribution(input_file, max_length, report_frequency=500000):
-  #read sentence lengths from the file. does not take tokenized sentences, but a raw file.
+  #read sentence lengths from the file. does not take tokenized sentences, but a raw vocab file.
   #max_length is the max possible length a sentence can have. one more bin will be made above
   #this in the list to hold values more than max_length. holds a value for 0-length as well
-  #returns the list of lengths. 
+  #returns the list of total lengths. 
   #
   # example with max_length=4
   # returns [ 0, 100,130,127,65,44 ] if 44 sentences have length >5, 65 have length 4, 127 have length 3, 130 length 2, 100 length 1, and 0 length 0
@@ -283,10 +330,6 @@ def get_sentence_length_distribution(input_file, max_length, report_frequency=50
 
 
 
-
-
-
-
 def even_bucket_distribution(sentence_lengths, num_buckets):
   #this is just a naive implementation, since bucket lengths don't need to be exact, but we might as well get something in the ballpark
   #to get the buckets to some sane values by looking at some averages.
@@ -301,10 +344,6 @@ def even_bucket_distribution(sentence_lengths, num_buckets):
       bucket_sums.append(running_sum)
       running_sum = 0
   return bucket_indexes
-
-
-
-
 
 
 
@@ -351,8 +390,9 @@ def initialize_vocabulary(vocabulary_path):
 
 
 
-def sentence_to_token_ids(sentence, vocabulary,
-                          tokenizer=None, normalize_digits=True):
+def sentence_to_token_ids(sentence,
+                          vocabulary,
+                          unknown_words=None):
   """Convert a string to list of integers representing token-ids.
 
   For example, a sentence "I have a dog" may become tokenized into
@@ -362,19 +402,14 @@ def sentence_to_token_ids(sentence, vocabulary,
   Args:
     sentence: the sentence in bytes format to convert to token-ids.
     vocabulary: a dictionary mapping tokens to integers.
-    tokenizer: a function to use to tokenize each sentence;
-      if None, basic_tokenizer will be used.
-    normalize_digits: Boolean; if true, all digits are replaced by 0s.
+    unknown_words: a function to use to decide what to do with unknown words,
+      perhaps it is truly best to represent them 
 
   Returns:
     a list of integers, the token-ids for the sentence.
   """
 
-  if tokenizer:
-    words = tokenizer(sentence)
-  else:
-    words = vanilla_ft_tokenizer(sentence)
-  
+  words = sentence.split()
   return [vocabulary.get(w, UNK_ID) for w in words]
 
 
@@ -384,10 +419,8 @@ def sentence_to_token_ids(sentence, vocabulary,
 
 
 
-
-
-def integerize_sentence(data_path, target_path, vocabulary_path,
-                      tokenizer=None, normalize_digits=True, report_frequency=100000):
+def integerize_sentences(data_path, target_path, vocabulary_path,
+                        report_frequency=500000):
   """Tokenize data file and turn into token-ids using given vocabulary file.
 
   This function loads data line-by-line from data_path, calls the above
@@ -400,7 +433,6 @@ def integerize_sentence(data_path, target_path, vocabulary_path,
     vocabulary_path: path to the vocabulary file.
     tokenizer: a function to use to tokenize each sentence;
       if None, basic_tokenizer will be used.
-    normalize_digits: Boolean; if true, all digits are replaced by 0s.
   """
   if not gfile.Exists(target_path):
     print("Integerizing data in %s" % data_path)
@@ -412,12 +444,32 @@ def integerize_sentence(data_path, target_path, vocabulary_path,
           counter += 1
           if counter % report_frequency == 0:
             print("Processed line %d" % counter)
-          token_ids = sentence_to_token_ids(tf.compat.as_bytes(line), vocab,
-                                            tokenizer, normalize_digits)
+          token_ids = sentence_to_token_ids(tf.compat.as_bytes(line), vocab)
           tokens_file.write(" ".join([str(tok) for tok in token_ids]) + "\n")
 
 
+def get_word_frequency_ratio(vocabulary, integerized_dataset_file_path, target_word, report_progress=2000000):
+  try:
+    target_index = vocabulary[target_word]
+  except KeyError, e:
+    raise("Could not find word %s in vocabulary dictionary" % target_word)
 
+  print("Get word frequency will search for target word %s, which is integer %d" % (target_word, target_index))
+  found = 0
+  total = 0
+
+  with open(integerized_dataset_file_path, "rb") as f:
+    lines_read = 0
+    for line in f:
+      words = line.split()
+      total += len(words)
+      for w in words:
+        if int(w) == target_index:
+          found += 1
+      lines_read += 1
+      if lines_read % report_progress==0:
+        print("...processed line %d, found %d occurrences of %s so far" % (lines_read, found, target_word))
+  return (found, float(found) / total)
 
 
 
@@ -461,14 +513,8 @@ def prepare_wmt_data(data_dir, en_vocabulary_size, fr_vocabulary_size, tokenizer
 
 
 
-
-
-
-
-
-
 def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev_path, from_vocabulary_size,
-                 to_vocabulary_size, tokenizer=None):
+                 to_vocabulary_size, tokenizer=None, glove=False, word2vec=False, fasttext=False):
   """Preapre all necessary files that are required for the training.
 
     Args:
@@ -482,14 +528,16 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
       tokenizer: a function to use to tokenize each data sentence;
         if None, basic_tokenizer will be used.
 
+
     Returns:
-      A tuple of 6 elements:
+      A tuple of 9 elements:
         (1) path to the token-ids for "from language" training data-set,
         (2) path to the token-ids for "to language" training data-set,
         (3) path to the token-ids for "from language" development data-set,
         (4) path to the token-ids for "to language" development data-set,
         (5) path to the "from language" vocabulary file,
         (6) path to the "to language" vocabulary file.
+        (7) path to the GloVe word embeddings created from the tokenized data, with size from_vocabulary_size and to_vocabulary_size
     """
 
   # Clean the sentences by using lowercase letters and changing numbers into written words.
@@ -511,30 +559,52 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
   create_vocabulary(to_vocab_path, to_clean_train_path , to_vocabulary_size, tokenizer)
   create_vocabulary(from_vocab_path, from_clean_train_path , from_vocabulary_size, tokenizer)
 
+  #Now, we have a valid vocabulary that has been properly tokenized, so we need to run
+  # some unsupervised learning algorithms
 
   # Integerize the training data by replacing words with their vocabulary representations (integers)
   # This will run only if the integerized version of the training set doesn't already exist
   to_train_ids_path = to_clean_train_path + (".ids_%d" % to_vocabulary_size)
   from_train_ids_path = from_clean_train_path + (".ids_%d" % from_vocabulary_size)
-  integerize_sentence(to_clean_train_path, to_train_ids_path, to_vocab_path, tokenizer)
-  integerize_sentence(from_clean_train_path, from_train_ids_path, from_vocab_path, tokenizer)
+  integerize_sentences(to_clean_train_path, to_train_ids_path, to_vocab_path)
+  integerize_sentences(from_clean_train_path, from_train_ids_path, from_vocab_path)
 
 
   # Create token ids for the development data.
-  # This will run only if the integerized version of the dev set doesn't already exiwst
+  # This will run only if the integerized version of the dev set doesn't already exist
   to_dev_ids_path = to_dev_path + (".ids_%d" % to_vocabulary_size)
   from_dev_ids_path = from_dev_path + (".ids_%d" % from_vocabulary_size)
-  integerize_sentence(to_clean_dev_path, to_dev_ids_path, to_vocab_path, tokenizer)
-  integerize_sentence(from_clean_dev_path, from_dev_ids_path, from_vocab_path, tokenizer)
+  integerize_sentences(to_clean_dev_path, to_dev_ids_path, to_vocab_path)
+  integerize_sentences(from_clean_dev_path, from_dev_ids_path, from_vocab_path)
+
+  #let's see how many times we can find the word "_UNK"
+  #vocab, _ = initialize_vocabulary(from_vocab_path)
+  #unk_count, unk_ratio = get_word_frequency_ratio(vocab, from_train_ids_path, "_UNK")
+  #print("\tUnknown count english is %d" % unk_count)
+  #print("\tUnknown ratio english is %f" % unk_ratio)
+  #vocab, _ = initialize_vocabulary(to_vocab_path)
+  #unk_count, unk_ratio = get_word_frequency_ratio(vocab, to_train_ids_path, "_UNK")
+  #print("\tUnknown count french is %d" % unk_count)
+  #print("\tUnknown ratio french is %f" % unk_ratio)
+  #raise BaseException("done")
+  #
+  # Stats - using 40,000 english and french words and default vanilla tokenizer gives about 1.4% english unknown and 1.7% french unknown words.
+  # For reference, "the" occurs at about a 5% hit rate for the english dataset.
+  #
+  #
+  #
 
   return (from_train_ids_path, to_train_ids_path,
           from_dev_ids_path, to_dev_ids_path,
           from_vocab_path, to_vocab_path)
 
 
-
-
-
+#to be called after load_dataset_in_memory
+def learn_glove_embeddings(source_path, target_path):
+  """
+  Reads
+  """
+  pass
 
 
 

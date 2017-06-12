@@ -5,7 +5,6 @@ FLAGS = tf.app.flags.FLAGS
 
 #TODO - these else cases for these first two functions
 #TODO - experiment more with what a "good v bad bucket" function is.
-
 def get_default_bucket_sizes(num_buckets):
 	if num_buckets == 3:
 		return [(10,15), (20, 30), (32,50)]
@@ -14,7 +13,8 @@ def get_default_bucket_sizes(num_buckets):
 
 	#TODO - finish this up
 
-#These are where we explicitly store some of the bucket sizes that have been tested, as well as provide test cases
+#These are where we explicitly store some of the bucket sizes that have been tested, as well as provide test cases.
+#TODO - actually implement this for something other than 3 buckets
 def get_candidate_bucket_sizes(num_buckets):
 	if num_buckets == 3:
 		return [
@@ -27,7 +27,7 @@ def get_candidate_bucket_sizes(num_buckets):
 
 #The bucket score metric isn't very special. For right now in testing, the score is simple:
 # Number of pads used * ratio_of_data_that_does_not_fit_in_buckets. This latter term is bounded to be >= 0.05, which needs to become a hyperparameter
-# 
+# TODO - add this 0.05 max as a parameter
 def get_bucket_score(bucket_sizes, dataset, unbucketed_dataset_ratio, minimum_bucket_data_ratio=0.0):
 	num_buckets = len(dataset)
 
@@ -58,6 +58,7 @@ def get_bucket_score(bucket_sizes, dataset, unbucketed_dataset_ratio, minimum_bu
 	#this is a naive hack, but the idea is that we can penalize for unbucketed data examples.
 	#this is an open ended problem here, what we do to penalize and target.
 	#low numbers are good!
+	#the good thing is, it doesn't really matter if our buckets are a perfect 33-33-33 split, or whatever, they should just be sort of close.
 	return (total_target_pads + total_source_pads) * max(0.05, unbucketed_dataset_ratio)
 
 

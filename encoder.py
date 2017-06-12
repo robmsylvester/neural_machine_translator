@@ -1,5 +1,6 @@
 import tensorflow as tf
 import custom_core_rnn as core_rnn
+import embeddings
 from tensorflow.python import shape
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl
@@ -34,33 +35,44 @@ def _create_encoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
 def _create_encoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
   raise NotImplementedError
 
-#TODO - this needs to become dynamic instead of static rnn's, probably. depending on timer calls. fuckin' padding.
-def run_encoder_NEW(encoder_json,
-                    encoder_inputs,
-                    num_encoder_symbols, #TODO - needs to be keyword arg because this may be coming from unsupervised embedding thats not in network
-                    embedding_size, #TODO - also needs to be keyword arg because this may be coming from unsupervised embedding thats not in network
-                    nematus_state_values=False, #TODO
-                    dtype=None):
+
+#TODO - this needs to become dynamic instead of static rnn's. not having the pad vectors and being able to call sequence_lengths would be better than explicitly
+# killing the pad target weights elsewhere down the road.
+def run_embedding_encoder(encoder_json,
+                          encoder_inputs,
+                          num_encoder_symbols, #TODO - needs to be keyword arg because this may be coming from unsupervised embedding thats not in network
+                          embedding_size, #TODO - also needs to be keyword arg because this may be coming from unsupervised embedding thats not in network
+                          embedding_algorithm=None,
+                          train_embeddings=True,
+                          nematus_state_values=False, #TODO
+                          dtype=None):
 
   # embeddings need to become non-updated-by-backprop embeddings from unsupervised glove, word2vec, or fasttext options
   with variable_scope.variable_scope("encoder", dtype=dtype) as scope:
     dtype=scope.dtype
 
+    embedded_encoder_inputs = embeddings.get_word_embeddings(encoder_inputs,
+                                                            num_encoder_symbols,
+                                                            embedding_size,
+                                                            embed_algorithm=embedding_algorithm,
+                                                            train_embeddings=train_embeddings,
+                                                            dtype=dtype)      
+
     #print("encoder inputs right now have length of %d and each has shape %s" % (len(encoder_inputs), str(encoder_inputs[0].get_shape())))
 
     #create embeddings - this will eventually be moved elsewhere when the embeddings are no longer trained
-    with variable_scope.variable_scope("embeddings") as scope:
-      embeddings = tf.get_variable("encoder_embeddings",
-                                  shape=[num_encoder_symbols, embedding_size],
-                                  initializer=tf.random_uniform_initializer(-1.0, 1.0),
-                                  dtype=dtype)
-
-      #get the embedded inputs from the lookup table
-      embedded_encoder_inputs = tf.nn.embedding_lookup(embeddings, encoder_inputs)
-
-      #these embedded inputs came in as a list so they will be of the shape (bucket_size, batch_size, embed_size), but we need
-      # them to be a sequence input for the lstm layers, so we reshape them back into a list of length bucket_size containing tensors of shape (batch_size, embed_size)
-      embedded_encoder_inputs = tf.unstack(embedded_encoder_inputs)
+    #with variable_scope.variable_scope("embeddings") as scope:
+    #  embeddings = tf.get_variable("encoder_embeddings",
+    #                              shape=[num_encoder_symbols, embedding_size],
+    #                              initializer=tf.random_uniform_initializer(-1.0, 1.0),
+    #                              dtype=dtype)
+    #
+    #  #get the embedded inputs from the lookup table
+    #  embedded_encoder_inputs = tf.nn.embedding_lookup(embeddings, encoder_inputs)
+    #
+    #  #these embedded inputs came in as a list so they will be of the shape (bucket_size, batch_size, embed_size), but we need
+    #  # them to be a sequence input for the lstm layers, so we reshape them back into a list of length bucket_size containing tensors of shape (batch_size, embed_size)
+    #s  embedded_encoder_inputs = tf.unstack(embedded_encoder_inputs)
 
     #print("the embedded encoder inputs each have shape %s, and there are %d of them in the list" % (str(embedded_encoder_inputs[0].get_shape()), len(embedded_encoder_inputs)))
 
@@ -179,7 +191,9 @@ def run_encoder_NEW(encoder_json,
       print("WARNING - your top layer cell outputs more than a single tensor at each time step. Perhaps it is bidirectional with no output merge mode specified. These tensors will be concatenated along axis 1. You should change this in the JSON to be 'concat' for readability, or 'sum' if you want the tensors element-wise added.")
     
     stack_output = tf.unstack(tf.concat(cell_outputs[top_layer], axis=1))
-    stack_states = [ cell_states[l] for l in cell_states ] # list of lists of states
+
+    #stack_states = [ cell_states[l] for l in cell_states ] # list of lists of states from ordereddict
+    stack_states = [val for key,val in cell_states.iteritems()]
 
     #print("length of stack states is %d" % len(stack_states))
     #print("top stack state is type %s" % str(type(stack_states[-1])))

@@ -8,13 +8,12 @@ import tensorflow as tf
 from tensorflow.python import shape 
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import control_flow_ops
 #from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import embedding_ops
-from tensorflow.python.ops import math_ops #TODO - make this not so fucking old
-from tensorflow.python.ops import nn_ops #TODO - make this not so fucking old
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.util import nest
+from tensorflow.python.ops import math_ops #TODO - make this not so fucking old
+from tensorflow.python.ops import nn_ops #TODO - make this not so fucking old
 
 from collections import OrderedDict
 
@@ -25,8 +24,8 @@ from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl
 
 #This is very similar to a dot product in this implementation between inputs and weights
 linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
+FLAGS = tf.app.flags.FLAGS #TODO - remove this dependency
 
-FLAGS = tf.app.flags.FLAGS
 
 def _create_decoder_cell(json_layer_parameters):
   if json_layer_parameters['lstm']:
@@ -92,7 +91,7 @@ def _prepare_top_encoder_state(top_states):
   assert isinstance(top_states, (list)), "top states must be a list"
   is_lstm_tuple = top_states[0].__class__.__name__ == 'LSTMStateTuple' #otherwise it is a GRU
 
-  #For now, this is more of a sanity check, but refactor this elsewhere
+  #TODO - For now, this is more of a sanity check, but refactor this elsewhere
   if len(top_states) == 2:
 
     if is_lstm_tuple:
@@ -117,9 +116,11 @@ def _prepare_top_encoder_state(top_states):
 
   return top_encoder_state
 
+
+
+
 def _convolve_attention_states(reshaped_attention_states, num_attention_heads, attention_size):
-  assert reshaped_attention_states.get_shape().ndims == 4, "Reshaped attention states must have 4 dimensions to be used in a convolution"
-  assert reshaped_attention_states.get_shape()[3] == attention_size, "The last dimension of the reshaped attention states must be the same as the attention size"
+  assert reshaped_attention_states.get_shape().with_rank(4)[3] == attention_size, "Reshaped attention states must have 4 dimensions. The last dimension of the reshaped attention states must be the same as the attention size"
 
   #these hidden features will be the reshaped attention states after being multiplied by a weight parameter, w1
   #in the attention model. there will be three sets of weights
@@ -173,21 +174,27 @@ def _extract_argmax_and_embed(embedding,
   return loop_function
 
 
+#Inputs:
+# Decoder inputs: A list of 2d tensors with shape (batch_size, input_size). the length of the list is the bucket size.
+# num_heads: an int, the number of attention heads
+# attention_states: a 3d tensor with shape (batch_size, bucket_size, )
 def validate_attention_decoder_inputs(decoder_inputs, num_heads, attention_states):
+
+  print("Validate attention decoder inputs has been called. the shape of this muthafucka is %s" % attention_states.get_shape())
 
   if not decoder_inputs:
     raise ValueError("Your attention decoder has no decoder inputs")
   if num_heads < 1:
     raise ValueError("The number of heads to the attention decoder must be a positive integer. It is %d" % num_heads)
-  if attention_states.get_shape()[2].value is None:
+  if attention_states.get_shape().with_rank(3)[2].value is None:
     raise ValueError("The attention_size of the attention states must be known. Attention states come in the order (batch_size, attention_length, attention_size). This shape of this input now is %s" %
                      attention_states.get_shape())
   
-  attn_length = attention_states.get_shape()[1].value
+  attn_length = attention_states.get_shape().with_rank(3)[1].value
   if attn_length is None:
     attn_length = array_ops.shape(attention_states)[1]
 
-  attn_size = attention_states.get_shape()[2].value
+  attn_size = attention_states.get_shape().with_rank(3)[2].value
 
   return attn_length, attn_size
 
@@ -374,10 +381,38 @@ def decoder_rnn_NEW(decoder_json, attn_input, hidden_states_stack, dtype=None):
     #we only care about the final output, but we need all the hidden cell states to pass back to this function later
     return stack_output, hidden_states_stack
 
+#Inputs:
+#
+#batch_size - int, the batch size dimension value from the decoder inputs
+#attention_size - int, chosen attention mechanism hidden size
+#num_attn_heads - int, the value of the flag for the number of attention heads to use
+#
+#returns - a list of tensors, shaped batch_size, attn_size, filled with 0 values. list has length num_attn_heads
+def initialize_attention(batch_size,
+                        attn_size,
+                        num_attn_heads,
+                        dtype=None):
+
+  #the size of the batch attention will be batch_size x attention size, and we stack these values along the 0 axis
+  batch_attn_size = tf.stack([batch_size, attn_size])
+  
+  attns = [
+      array_ops.zeros(
+          batch_attn_size, dtype=dtype) for _ in xrange(num_attn_heads)
+  ]
+
+  # Make sure the attention size is properly set.
+  for attn in attns:
+    attn.set_shape([None, attn_size])
+
+  return attns
+
+  
 
 def run_manning_attention_mechanism():
   raise NotImplementedError()
   #TODO - write this. simple scoring function of h_t * (W_s * h_s). 1 set of weights vs. 3 in bahdanu's
+
 
 def run_bahdanu_attention_mechanism(query_state,
   reshaped_attention_states,
@@ -403,9 +438,7 @@ def run_bahdanu_attention_mechanism(query_state,
   #print("size of first element of lstm state tuple in attention is " + str(query_state[0].get_shape()))
   #print("size of second element of lstm state tuple in attention is " + str(query_state[1].get_shape()))
 
-  #let's verify that the cell state and the hidden state are the same size and the proper number of dimensions
-  assert query_state[0].get_shape().ndims == query_state[1].get_shape().ndims == 2, "Cell state and hidden state of lstm state tuple need a dimensionality of two. (batch_size, cell size)"
-  assert query_state[0].get_shape()[1] == query_state[1].get_shape()[1], "Cell state and hidden state of lstm tuple need to be the same size."
+  #let's verify that the cell state and the hidden state
   assert len(hidden_attention_states) == num_attention_heads, "There must be the same number of calculated hidden attention states from the 1x1 convolution as there are number of attention heads."
 
   #now we concatenate the two states of the lstm across the second dimension (the one that is not the batch size) 
@@ -413,19 +446,8 @@ def run_bahdanu_attention_mechanism(query_state,
   #notice that this means we are concatenating the LSTM cell state and the lstm hidden state across one dimension
   query_state = array_ops.concat(nest.flatten(query_state), 1)
 
-  #TODO - remove this code
-  #first, flatten the cell state and hidden state
-  #query_list = nest.flatten(query_state)
-  #for q in query_list:  # Check that ndims == 2 if specified.
-  #  ndims = q.get_shape().ndims
-  #  if ndims:
-  #    assert ndims == 2
-
-
   #print(query_state.get_shape())
   #print("The attention mechanism has flattened the query shape to " + str(query_state.get_shape()))
-  
-  attention_vec_size = attention_size #TODO - this vec size variable is pretty useless.
 
   for head_idx in xrange(num_attention_heads):
     with variable_scope.variable_scope("Attention_%d" % head_idx):
@@ -435,12 +457,12 @@ def run_bahdanu_attention_mechanism(query_state,
       #we apply a linear transformation to the (batch_size, decoder_hidden_size*2) query state to 
       #transform it into the size of our attention vector)
       #this gives us another set of weights, namely weights_2, or U in the above definition
-      weighted_new_state = linear(query_state, attention_vec_size, True)
+      weighted_new_state = linear(query_state, attention_size, True)
 
       #print("after transformation, new shape is " + str(weighted_new_state.get_shape()))
 
       #this vector needs to be reshaped into the same shape as the hidden features.
-      weighted_new_state = array_ops.reshape(weighted_new_state, [-1, 1, 1, attention_vec_size])
+      weighted_new_state = array_ops.reshape(weighted_new_state, [-1, 1, 1, attention_size])
 
       #print("after reshape squeeze, new shape is " + str(weighted_new_state.get_shape()))
       
@@ -452,9 +474,7 @@ def run_bahdanu_attention_mechanism(query_state,
                               [2, 3])
 
       #print("after attention hyperbolic tangent function, new shape is " + str(s.get_shape()))
-      
       softmax_attention_weights = nn_ops.softmax(s)
-
       #print("after softmax function, new shape is " + str(softmax_attention_weights.get_shape()))
 
       # Now calculate the attention-weighted vector d.
@@ -562,68 +582,53 @@ def attention_decoder(decoder_architecture,
     #print("the attention decoder has been called with attention states sized " + str(attention_states.get_shape()))
 
     #the attention states come in and they are shaped (probably) as such:
-    #   (batch size, 1 (or whatever attention length is), attention_size)
+    #   (batch size, attn_length (bucket length, or 1 if decoding), attention_size)
     # these need to be reshaped for a convolutional operation that represents the 
     reshaped_attention_states = array_ops.reshape(attention_states,
                                [-1, attn_length, 1, attn_size])
 
-    #print("reshaped attention states have shape %s" % str(reshaped_attention_states.get_shape()))
-
+    #print("reshaped attention states have shape %s" % str(reshaped_attention_states.get_shape()))=
     #print("the attention decoder has reshaped the attention state to size " + str(reshaped_attention_states.get_shape()))
 
     #we need to construct the following equation:
-    #attention = softmax(V^T * tanh(W_1 * attention_states + W_2 * new_state)), where new_state is produced on each cell output
-    #there are three parameters here, namely, V^t, W_1 and W_2. 
-
-    attention_vec_size = attn_size  # Size of query vectors for attention.
-
+    # attention = softmax(V^T * tanh(W_1 * attention_states + W_2 * new_state)), where new_state is produced on each cell output
+    # there are three parameters here, namely, V^t, W_1 and W_2. 
+    
     #we will use bahdanu attention.
     #store the attention parameter V
     weights_v = []
     for head_idx in xrange(num_heads):
       weights_v.append(
-          variable_scope.get_variable("attention_v_head_%d" % head_idx, [attention_vec_size])
+          variable_scope.get_variable("attention_v_head_%d" % head_idx, [attn_size])
       )
 
     #print("the attention decoder has reshaped the attention state to a new size using 1x1 convolution.
     #now size is " + str(hidden_attention_states[head_idx].get_shape()))
-    outputs = []
-    prev = None
-
+    
     #we need to store the batch size of the decoder inputs to use later for reshaping.
     # because these come in as a list of tensors, just take the first one.
     # this will store a TENSOR of one-dimension with the batch_size shape.
-    batch_size = tf.shape(decoder_inputs[0])[0]
 
-    #the size of the batch attention will be batch_size x attention size, and we stack these values along the 0 axis
-    batch_attn_size = tf.stack([batch_size, attn_size])
-    
-    attns = [
-        array_ops.zeros(
-            batch_attn_size, dtype=dtype) for _ in xrange(num_heads)
-    ]
-
+    #the batch size is inferred from the list 2d-shaped (batch_size, input_size) decoder_inputs
+    attentions = initialize_attention( tf.shape(decoder_inputs[0])[0], attn_size, num_heads, dtype=dtype)
+  
     #store the attention parameter W_1 * attention_state
     hidden_attention_states = _convolve_attention_states(reshaped_attention_states, num_heads, attn_size)
 
-    for a in attns:  # Ensure the second shape of attention vectors is set.
-      a.set_shape([None, attn_size])
     if initial_state_attention:
-      #This is a lot of work for initial state attention, maybe we should just tell this thing to fuck off
+
+      #This is a lot of work for initial state attention, maybe we should just tell this feature to fuck off
       #TODO = eventually this should get abstracted away probably
       top_encoder_state_list = final_encoder_states[-1]
       reshaped_top_encoder_state = _prepare_top_encoder_state(top_encoder_state_list)
 
-      attns = run_bahdanu_attention_mechanism(reshaped_top_encoder_state,
+      attentions = run_bahdanu_attention_mechanism(reshaped_top_encoder_state,
                                       reshaped_attention_states,
                                       hidden_attention_states,
                                       weights_v,
                                       num_heads,
                                       attn_size,
                                       attn_length)
-
-    #print("about to start enumerating decoder inputs. current scope is %s" % scope.name)
-
 
     #We need to initialize the hidden states of the decoder before we start putting inputs into the network
     #This can be done in many ways, so we call this off to another function.
@@ -633,49 +638,54 @@ def attention_decoder(decoder_architecture,
                                                                         decoder_architecture,
                                                                         decoder_state_initializer)
 
-    for i, inp in enumerate(decoder_inputs):
+    #this is the initial value for the loop counters that track the outputs at each time step, 
+    # as well as a second reference to the previous output, for readability
+    previous_decoder_output = None
+    outputs = []
 
-      #print("Running attention mechanism on decoder input index %d" % i)
+    #=============================Main Decoder Loop================================
+    for decoder_time_step, decoder_input in enumerate(decoder_inputs):
 
-      if i > 0:
+      #we only set reuse to true after the first run in the loop. they'll only get changed one time, on the first run
+      # in tensorflow, on the iteration after they're initially created in memory. and that's good.
+      if decoder_time_step > 0:
         variable_scope.get_variable_scope().reuse_variables()
+      
+
       # If loop_function is set, we use it instead of decoder_inputs.
-      if loop_function is not None and prev is not None:
+      if loop_function is not None and previous_decoder_output is not None:
         with variable_scope.variable_scope("loop_function", reuse=True):
-          inp = loop_function(prev, i)
+          print("\t\t\tthe loop function is not none")
+          decoder_input = loop_function(previous_decoder_output, decoder_time_step)
 
       #TODO - refactor this
       # Merge input and previous attentions into one vector of the right size.
-      input_size = inp.get_shape().with_rank(2)[1]
+      #TODO - with rank should probably be used throughout this file a lot more
+      input_size = decoder_input.get_shape().with_rank(2)[1]
       if input_size.value is None:
-        raise ValueError("Could not infer input size from input: %s" % inp.name)
-      attentive_input = linear([inp] + attns, input_size, True)
+        raise ValueError("Could not infer input size from input: %s" % decoder_input.name)
 
-      #initialize the hidden states of the network if i==0
+      #attentions is a list, probably of length one because num_heads is probably one, but it is still a list.
+      #decoder_input is not, it's a tensor, so we put it in a list.
+      attentive_input = linear([decoder_input] + attentions, input_size, True)
 
-      #print("about to call decoder_rnn. current scope is %s" % scope.name)
-      
-      #Run the RNN through the decoder architecture
-      #notice how hidden states is rewritten each time!
-      #TODO - write this
-      
+
       #TODO - output_size is only written for the unidirectional case under the presumption the top decoder layer won't be bidirectional
       #decoder_output, hidden_states, output_size = decoder_rnn(attentive_input,
       #                                                        hidden_states,
       #                                                        num_layers=num_decoder_layers)
 
       #This is similar to the encoder mechanism we wrote earlier but the main difference
-      # (other than the whole-attention-mechanism thing) is that this decoder runs for ONE time step
+      # (other than the whole-attention-mechanism thing) is that this decoder call runs for ONE time step
       #decoder output is a list with a single tensor. eventually this list could be removed
       #decoder hidden states is a list of lists of tensors
-      #output size is t
       decoder_output, decoder_hidden_states = decoder_rnn_NEW(decoder_architecture,
                                                               attentive_input,
                                                               decoder_hidden_states,
                                                               dtype=dtype)
 
-      #this can probably go somewhere else.
-      output_size = decoder_output[0].get_shape()[1]
+      #this can probably go somewhere else. added with_rank(2)
+      output_size = decoder_output[0].get_shape().with_rank(2)[1]
 
       #hidden states is a list of LSTMStateTuples which each store the states for each layer of the decoder stack
       #hidden_states[0] - lstmstatetuple storing (cell_state, hidden_state) for lowest layer of lstm stack
@@ -687,17 +697,19 @@ def attention_decoder(decoder_architecture,
       assert decoder_hidden_states[-1].__class__.__name__ == 'list', "Decoder hidden state's elements are lists."
       assert len(decoder_hidden_states[-1]) == 1, "decoder hidden state at top layer needs to only have one lstmstatetuple in the list. this is because we pass it directly as the query to the bahdanu attention mechanism, which expects an lstm tuple"
       assert decoder_hidden_states[-1][0].__class__.__name__ == 'LSTMStateTuple', "Expected hiddenstates -1 to have an lstm tuple. Instead it is %s" % decoder_hidden_states[-1].__class__.__name__
-      top_decoder_state = decoder_hidden_states[-1][0] #still decoder state will be an LSTMStateTuple
+      
+      #still decoder state will be an LSTMStateTuple
+      top_decoder_state = decoder_hidden_states[-1][0]
 
       # Run the attention mechanism.
       # Notice how we still call hidden attention states. the reason for this is that we calcualted this beforehand and it
       # does not change. what changes is the decoder state that is half of the built in term within the hyperbolic tangent activation function.
-      if i == 0 and initial_state_attention:
+      if decoder_time_step == 0 and initial_state_attention:
         with variable_scope.variable_scope(
             variable_scope.get_variable_scope(), reuse=True):
-          attns = run_bahdanu_attention_mechanism(top_decoder_state, reshaped_attention_states, hidden_attention_states, weights_v, num_heads, attn_size, attn_length)
+          attentions = run_bahdanu_attention_mechanism(top_decoder_state, reshaped_attention_states, hidden_attention_states, weights_v, num_heads, attn_size, attn_length)
       else:
-        attns = run_bahdanu_attention_mechanism(top_decoder_state, reshaped_attention_states, hidden_attention_states, weights_v, num_heads, attn_size, attn_length)
+        attentions = run_bahdanu_attention_mechanism(top_decoder_state, reshaped_attention_states, hidden_attention_states, weights_v, num_heads, attn_size, attn_length)
 
       #print("after calling attention mechanism, the output shape of the first item in the attns list is " + str(attns[0].get_shape()))
 
@@ -706,12 +718,14 @@ def attention_decoder(decoder_architecture,
       # from the decoder into the dimensionality specified by the output projection
       with variable_scope.variable_scope("output_projection"):
 
-        #the attentions are a list, even if the number of heads is one, so we must put the decoder output in as a list as well. this
-        # is the reason decoder_output is a list in the first place.
-        decoder_output = linear(decoder_output + attns, output_size, True)
+        #the attentions are a list, and the decoder output is a list as well, so we can pass these directly to linear
+        decoder_output = linear(decoder_output + attentions, output_size, True)
+
+      #Append out final outputs to the list, adjust the loop iterator, and continue decoding...  
       if loop_function is not None:
-        prev = decoder_output
+        previous_decoder_output = decoder_output
       outputs.append(decoder_output)
+    #================================End Main Decoder Loop===================================
 
   return outputs, top_decoder_state
 
