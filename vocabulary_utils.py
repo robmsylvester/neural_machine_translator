@@ -330,25 +330,6 @@ def get_sentence_length_distribution(input_file, max_length, report_frequency=50
 
 
 
-def even_bucket_distribution(sentence_lengths, num_buckets):
-  #this is just a naive implementation, since bucket lengths don't need to be exact, but we might as well get something in the ballpark
-  #to get the buckets to some sane values by looking at some averages.
-  running_sum = 0
-  bucket_indexes = []
-  bucket_sums = []
-  target_per_bucket = sum(sentence_lengths) / num_buckets
-  for length_idx, num_lengths in enumerate(sentence_lengths):
-    running_sum += num_lengths
-    if running_sum > target_per_bucket or length_idx == len(sentence_lengths) - 1:
-      bucket_indexes.append(length_idx)
-      bucket_sums.append(running_sum)
-      running_sum = 0
-  return bucket_indexes
-
-
-
-
-
 
 def initialize_vocabulary(vocabulary_path):
   """Initialize vocabulary from file.
@@ -448,6 +429,8 @@ def integerize_sentences(data_path, target_path, vocabulary_path,
           tokens_file.write(" ".join([str(tok) for tok in token_ids]) + "\n")
 
 
+
+
 def get_word_frequency_ratio(vocabulary, integerized_dataset_file_path, target_word, report_progress=2000000):
   try:
     target_index = vocabulary[target_word]
@@ -470,8 +453,6 @@ def get_word_frequency_ratio(vocabulary, integerized_dataset_file_path, target_w
       if lines_read % report_progress==0:
         print("...processed line %d, found %d occurrences of %s so far" % (lines_read, found, target_word))
   return (found, float(found) / total)
-
-
 
 
 
@@ -507,8 +488,6 @@ def prepare_wmt_data(data_dir, en_vocabulary_size, fr_vocabulary_size, tokenizer
   to_dev_path = dev_path + ".fr"
   return prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev_path, en_vocabulary_size,
                       fr_vocabulary_size, tokenizer)
-
-
 
 
 
@@ -577,16 +556,6 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
   integerize_sentences(to_clean_dev_path, to_dev_ids_path, to_vocab_path)
   integerize_sentences(from_clean_dev_path, from_dev_ids_path, from_vocab_path)
 
-  #let's see how many times we can find the word "_UNK"
-  #vocab, _ = initialize_vocabulary(from_vocab_path)
-  #unk_count, unk_ratio = get_word_frequency_ratio(vocab, from_train_ids_path, "_UNK")
-  #print("\tUnknown count english is %d" % unk_count)
-  #print("\tUnknown ratio english is %f" % unk_ratio)
-  #vocab, _ = initialize_vocabulary(to_vocab_path)
-  #unk_count, unk_ratio = get_word_frequency_ratio(vocab, to_train_ids_path, "_UNK")
-  #print("\tUnknown count french is %d" % unk_count)
-  #print("\tUnknown ratio french is %f" % unk_ratio)
-  #raise BaseException("done")
   #
   # Stats - using 40,000 english and french words and default vanilla tokenizer gives about 1.4% english unknown and 1.7% french unknown words.
   # For reference, "the" occurs at about a 5% hit rate for the english dataset.
@@ -610,8 +579,13 @@ def learn_glove_embeddings(source_path, target_path):
 
 
 
-def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ignore_lines=0, report_frequency=200000,
-                            report_bucket_distribution=False):
+def load_dataset_in_memory(source_path,
+                          target_path,
+                          max_source_sentence_length,
+                          max_target_sentence_length,
+                          max_size=None,
+                          ignore_lines=0,
+                          report_frequency=200000):
   """Read data from source and target files and put into buckets.
 
   Args:
@@ -621,9 +595,8 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
     target_path: path to the file with integer-like token-ids for the target language.
       it must be aligned with the source file: n-th line contains the desired
       output for n-th line from the source_path.
-    buckets - list of tuples (source max length, target max length) for
-            - various sentence length buckets with which to append the data.
-            - or, if auto_build_buckets is True, this can be None
+    max_source_sentence_length: int - the max length of characters possible for a source sentence, others not used
+    max_target_sentence_length: int - the max length of characters possible for a target sentence, others not used
     ignore_lines - integer, how many lines to ignore at the beginning of the file.
                   at times, it may be easier to train on a few million at a time.
                   then just stop the model and train on a different part of the data.
@@ -631,31 +604,24 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
     max_size: maximum number of lines to read, all other will be ignored;
         if 0 or None, all lines will be read.
     report_frequency: integer to specify to console how often to report progress in processing file
-    report_bucket_distribution
 
   Returns:
-    data_set: a list of length len(buckets); 
-      data_set[n] contains a list of
-      (source, target) pairs read from the provided data files that fit
-      into the n-th bucket, i.e., such that len(source) < buckets[n][0] and
-      len(target) < buckets[n][1];
-      source and target are integer lists of token-ids.
-    buckets: the buckets to be used in the neural network.
+    data_set contains a list of
+      (source, target) pairs read from the provided data files, but only storing up to max_sentence_length for the
+      source and target. final symbol will always be _EOS
   """
 
-
-  data_set = [ [] for _ in buckets] #we have the bucket sizes, so write straight to memory
+  data_set = []
   unbucketed_data_ratio = 0.
-  unbucketed_data_set = []
 
   with tf.gfile.GFile(source_path, mode="r") as source_file:
     with tf.gfile.GFile(target_path, mode="r") as target_file:
-      #print("Splitting training examples into buckets. Examples that do not fit into a bucket will not be used in training.")
       
       counter = 0
-      found_bucket_count = 0
+      used_sentence_pairs = 0
+      unused_sentence_pairs = 0 #too big to fit in max_size constraints
 
-      source = source_file.readline() 
+      source = source_file.readline()
       target = target_file.readline()
 
       while source and target:
@@ -670,26 +636,23 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
         counter += 1
 
         if counter % report_frequency == 0:
-          print("reading data line %d" % counter)
+          print("\tloaded up through line %d in memory" % counter)
 
         #What we read is not quite an integer yet, so convert the string representations to actual integers.
         source_ids = [ int(x) for x in source.split()]
         target_ids = [ int(x) for x in target.split()]
 
         #We always add the end of sentence to the target sentence and do it here so that it doesn't
-        #go above the max bucket size ever. 
+        #go above the max target size ever. Do this BEFORE checking the sizes.
         target_ids.append(EOS_ID)
 
-        found_bucket = False
-        for bucket_id, (source_size, target_size) in enumerate(buckets):
-          if len(source_ids) < source_size and len(target_ids) < target_size:
-            found_bucket = True
-            found_bucket_count += 1
-            data_set[bucket_id].append([source_ids, target_ids])
-            break
-
-        if not found_bucket:
-          unbucketed_data_set.append([source_ids, target_ids])
+        #Notice here that we use <= to source sentence, because we don't mess with it at all, and can feed these words into the neural network
+        #However, target sentence uses <, and this is because we append a _GO symbol to it. This means the max target length could be too large
+        if len(source_ids) <= max_source_sentence_length and len(target_ids) < max_target_sentence_length:
+          data_set.append([source_ids, target_ids])
+          used_sentence_pairs += 1
+        else:
+          unused_sentence_pairs += 1
 
         if max_size and counter >= max_size:
           break
@@ -698,15 +661,5 @@ def load_dataset_in_memory(source_path, target_path, buckets, max_size=None, ign
         source = source_file.readline()
         target = target_file.readline()
 
-  unbucketed_data_ratio = float(len(unbucketed_data_set)) / counter
-  if report_bucket_distribution:
-
-    print("**************Training Set Bucket Statistics******************")
-    print("Number of training sentence pairs: %d" % counter)
-    print("Training sentence bucket retention rate: %.4f" % (float(found_bucket_count) / counter))
-    for bucket_id, bucket in enumerate(data_set):
-      print (found_bucket_count)
-      print("Bucket %d distribution: %.4f" % (bucket_id, float(len(bucket)) / found_bucket_count))
-    print("No buckets: %.4f" % unbucketed_data_ratio)
-
+  unbucketed_data_ratio = float(used_sentence_pairs) / (used_sentence_pairs+unused_sentence_pairs)
   return data_set, unbucketed_data_ratio

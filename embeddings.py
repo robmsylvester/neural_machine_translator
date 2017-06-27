@@ -62,9 +62,7 @@ FLAGS = tf.app.flags.FLAGS
 
 
 #TODO - abstract away this embedding file flag into a full argument passed earlier on
-def initialize_glove_embeddings_tensor(num_enc_symbols, embed_size, embedding_file=None, dtype=None):
-  if embedding_file is None:
-  	embedding_file = FLAGS.glove_embedding_file
+def initialize_glove_embeddings_tensor(num_enc_symbols, embed_size, embedding_file, dtype=None):
 
   if gfile.Exists(embedding_file):
   	embeddings = np.zeros(shape=(num_enc_symbols, embed_size), dtype=np.float32) #TODO - fix this dtype
@@ -102,30 +100,55 @@ def initialize_glove_embeddings_tensor(num_enc_symbols, embed_size, embedding_fi
   	raise IOError("Embedding file location %s not found" % embedding_file)
 
 
+def determine_embedding_file(embed_language, embed_algorithm):
+  if embed_language is None:
+    assert embed_algorithm == "network", "If there is no passed embedding language, you must not pass None to embed_algorithm because it expects to use a pretrained embedding file to initialize tensors."
+    embed_file = None
+  elif embed_language == "source":
+    if embed_algorithm == 'glove':
+      embed_file = FLAGS.glove_encoder_embedding_file
+    elif embed_algorithm == 'word2vec':
+      embed_file = FLAGS.word2vec_encoder_embedding_file
+    elif embed_algorithm == 'fasttext':
+      embed_file = FLAGS.fasttext_encoder_embedding_file
+  elif embed_language == "target":
+    if embed_algorithm == 'glove':
+      embed_file = FLAGS.glove_decoder_embedding_file
+    elif embed_algorithm == 'word2vec':
+      embed_file = FLAGS.word2vec_decoder_embedding_file
+    elif embed_algorithm == 'fasttext':
+      embed_file = FLAGS.fasttext_decoder_embedding_file
+  else:
+    raise ValueError("Embed language must be None, source or target")
+  return embed_file
 
+def get_word_embeddings(inputs, num_symbols, embed_size, embed_language, embed_algorithm="network", train_embeddings=True, return_list=True, dtype=None):
 
-def get_word_embeddings(enc_inputs, num_enc_symbols, embed_size, embed_algorithm=None, train_embeddings=True, dtype=None):
+  if embed_algorithm != "network":
+    print("determining embedding file. embed language is %s" % embed_language)
+    embed_file = determine_embedding_file(embed_language, embed_algorithm)
 
   #No unsupervised learning algorithm
-  if embed_algorithm is None:
+  if embed_algorithm is "network":
     print("***Note - No unsupervised embedding algorithm is present. Word embeddings will be randomized and trained by backpropagation.")
     #create embeddings - this will eventually be moved elsewhere when the embeddings are no longer trained
 
     with variable_scope.variable_scope("embeddings") as scope:
+      print("using network embeddings with size %d" % embed_size)
       emb = tf.get_variable("encoder_embeddings",
-                            shape=[num_enc_symbols, embed_size],
+                            shape=[num_symbols, embed_size],
                             initializer=tf.random_uniform_initializer(-1.0, 1.0),
                             trainable=True,#have to be trainable because embed algorithm is none.
                             dtype=dtype)
 
       #get the embedded inputs from the lookup table
       #these will be trained by backpropagation
-      embedded_encoder_inputs = tf.nn.embedding_lookup(emb, enc_inputs)
+      embedded_encoder_inputs = tf.nn.embedding_lookup(emb, inputs)
 
       #these embedded inputs came in as a list. now they will be of the shape (bucket_size, batch_size, embed_size), but we need
       # them to be a sequence input for the lstm layers, so we reshape them back into a list of length bucket_size containing tensors of shape (batch_size, embed_size)
       embedded_encoder_inputs = tf.unstack(embedded_encoder_inputs)
-    return embedded_encoder_inputs
+      return embedded_encoder_inputs
 
   elif embed_algorithm == 'glove':
     print("***Note - Word embeddings will be initialized by glove.")
@@ -137,15 +160,20 @@ def get_word_embeddings(enc_inputs, num_enc_symbols, embed_size, embed_algorithm
 
     with variable_scope.variable_scope("glove_embeddings") as scope:
       emb = tf.get_variable("encoder_embeddings",
-                            initializer=initialize_glove_embeddings_tensor(num_enc_symbols, embed_size, dtype=dtype),
+                            initializer=initialize_glove_embeddings_tensor(num_symbols, embed_size, embed_file, dtype=dtype),
                             trainable=train_embeddings,
                             dtype=dtype)
 
       #get the embedded inputs from the lookup table
       #these will be trained by backpropagation
-      embedded_encoder_inputs = tf.nn.embedding_lookup(emb, enc_inputs)
+      embedded_encoder_inputs = tf.nn.embedding_lookup(emb, inputs)
 
-      #these embedded inputs came in as a list. now they will be of the shape (bucket_size, batch_size, embed_size), but we need
-      # them to be a sequence input for the lstm layers, so we reshape them back into a list of length bucket_size containing tensors of shape (batch_size, embed_size)
-      embedded_encoder_inputs = tf.unstack(embedded_encoder_inputs)
-    return embedded_encoder_inputs
+      #these embedded inputs came in as a list. now they will be of the shape (max_time, batch_size, embed_size),
+      #but if they are being used in a static rnn we need a list of length max_time with tensors being of shape (batch_size, embed_size)
+      return tf.unstack(embedded_encoder_inputs) if return_list else embedded_encoder_inputs
+  elif embed_algorithm == "word2vec":
+    raise NotImplementedError
+  elif embed_algorithm == "fasttext":
+    raise NotImplementedError
+  else:
+    raise NotImplementedError

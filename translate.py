@@ -45,24 +45,33 @@ import tensorflow as tf
 import vocabulary_utils
 import bucket_utils
 import download_utils
-import eda_model
+import seq2seqEDA
 
 
 FLAGS = tf.app.flags.FLAGS
 
-def create_model(session, forward_only, buckets):
-  """Create translation model and initialize or load parameters in session."""
-  dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
-  model = eda_model.EncoderDecoderAttentionModel(
+def create_model(session, forward_only):
+  """Create translation model and initialize or load parameters in tensorflow session.
+  Args:
+    session - Tensorflow session created with tf.Session()    
+    forward_only - Boolean, amounts to whether or not we are training. If decoding or running validation set,
+                   we don't care about updating the parameters via backpropagation, just doing a prediction.
+                   If training, need backprop. Amounts to a control op on whether or not to run those gradient
+                   updates in the session
+  """
+  dtype = tf.float16 if FLAGS.use_fp16 else tf.float32 #TODO - deprecated support for tf.float16, kill it.
+
+  model = seq2seqEDA.seq2seqEDA(
       FLAGS.from_vocab_size,
       FLAGS.to_vocab_size,
-      buckets,
       FLAGS.max_clipped_gradient,
       FLAGS.batch_size,
       FLAGS.learning_rate,
       FLAGS.learning_rate_decay_factor,
       FLAGS.minimum_learning_rate,
       FLAGS.encoder_decoder_architecture_json,
+      FLAGS.max_source_sentence_length,
+      FLAGS.max_target_sentence_length,
       forward_only=forward_only,
       dtype=dtype)
   ckpt = tf.train.get_checkpoint_state(FLAGS.data_dir)
@@ -75,13 +84,14 @@ def create_model(session, forward_only, buckets):
   return model
 
 
+def beam_search_decoder():
+  #outputs = [int(np.argmax(logit, axis=1)) for logit in output_logits]
+  pass
+
+
+
 def train():
-
-  if FLAGS.use_default_buckets:
-    _buckets = bucket_utils.get_default_bucket_sizes(FLAGS.num_buckets)
-  else:
-    _buckets = None
-
+  #Load data from file, preprocess it and tokenize it, integerize it, all according to different flags.
   from_train, to_train, from_dev, to_dev, _, _ = vocabulary_utils.prepare_wmt_data(FLAGS.data_dir,
                                                                                   FLAGS.from_vocab_size,
                                                                                   FLAGS.to_vocab_size)
@@ -91,72 +101,34 @@ def train():
     print("Session initialized. Creating Model...")
 
     if FLAGS.load_train_set_in_memory:
-      print("Training set will be loaded into memory")
+      print("Training set will be loaded into memory.")
     else:
-      print("Training set batches will be dynamically placed into buckets at each training step by reading from file")
+      print("Training set will be read from training file on each batch instance.")
 
     # Read data into buckets and compute their sizes.
     print ("Reading development and training data (limit: %d)."
            % FLAGS.max_train_data_size)
 
-    #The training set will be loaded into memory only if the user specifies in a flag, because
-    #with large numbers of buckets, big models, or huge datasets, you can run out of memory easily
+    #The training set will be loaded into memory only if the user specifies in a flag
     if FLAGS.load_train_set_in_memory:
-
-      if not FLAGS.use_default_buckets:
-        print("Will infer best bucket sizes according to candidate buckets defined in bucket_utils. Will limit analysis to %d samples" % FLAGS.bucket_inference_sample_size)
-        candidate_buckets = bucket_utils.get_candidate_bucket_sizes(FLAGS.num_buckets)
-        best_bucket_score = float("inf")
-        best_bucket_index = None
-        for idx,cb in enumerate(candidate_buckets):
-          candidate_train_set, unbucketed_data_ratio = vocabulary_utils.load_dataset_in_memory(from_train,
-                                              to_train,
-                                              cb,
-                                              ignore_lines=FLAGS.train_offset,
-                                              max_size=FLAGS.bucket_inference_sample_size)
-
-          bucket_score = bucket_utils.get_bucket_score(cb, candidate_train_set, unbucketed_data_ratio, minimum_bucket_data_ratio=FLAGS.minimum_data_ratio_per_bucket)
-
-          print("bucket score for this arrangement is %d" % bucket_score)
-
-          #score = how few padded words there are, under the constraints that the datasets are large enough (>= min ratio)
-          if bucket_score < best_bucket_score:
-            print("Best bucket score is now %d" % bucket_score)
-            best_bucket_score = bucket_score
-            best_bucket_index = idx
-
-        if best_bucket_index is not None:
-          _buckets = candidate_buckets[best_bucket_index]
-        else:
-          raise ValueError("No bucket could be found that was within your constraints of a minimum data ratio")
-      
-
       train_set, _ = vocabulary_utils.load_dataset_in_memory(from_train,
-                                                    to_train,
-                                                    _buckets,
-                                                    ignore_lines=FLAGS.train_offset,
-                                                    max_size=FLAGS.max_train_data_size,
-                                                    report_bucket_distribution=True)
+                                                            to_train,
+                                                            FLAGS.max_source_sentence_length,
+                                                            FLAGS.max_target_sentence_length,
+                                                            ignore_lines=FLAGS.train_offset,
+                                                            max_size=FLAGS.max_train_data_size)
     else:
-      raise NotImplementedError("Rob, write this method")
+      raise NotImplementedError("No support yet for loading training data from files.")
 
     #Load the validation set in memory always, because its relatively small
     dev_set, _ = vocabulary_utils.load_dataset_in_memory(from_dev,
-                                                          to_dev,
-                                                          _buckets)
+                                                         to_dev,
+                                                         FLAGS.max_source_sentence_length,
+                                                         FLAGS.max_target_sentence_length)
 
+    model = create_model(sess, False)
 
-    model = create_model(sess, False, _buckets)
-
-
-    train_bucket_sizes = [len(train_set[b]) for b in xrange(len(_buckets))]
-    train_total_size = float(sum(train_bucket_sizes))
-
-    # A bucket scale is a list of increasing numbers from 0 to 1 that we'll use
-    # to select a bucket. Length of [scale[i], scale[i+1]] is proportional to
-    # the size if i-th training bucket, as used later.
-    train_buckets_scale = [sum(train_bucket_sizes[:i + 1]) / train_total_size
-                           for i in xrange(len(train_bucket_sizes))]
+    total_train_size = len(train_set)
 
     # This is the training loop.
     step_time = 0.0
@@ -169,32 +141,25 @@ def train():
 
     while True:
 
-      #we will choose a random bucket
-      r_n = np.random.rand()
-
-      for bucket_idx, bucket_scale in enumerate(train_buckets_scale):
-        if bucket_scale > r_n:
-          bucket_id = bucket_idx
-          break
-
       #Start a timer for training
       start_time = time.time()
 
-      #Get a batch from the model by choosing source-target bucket pairs that match the bucket id chosen.
+      #Get a batch from the model by choosing source-target pairs.
       #Target weights are necessary because they will allow us to weight how much we care about missing
       #each of the logits. a naive implementation of this, and probably not a bad way to do it at all,
       #is to just weight the PAD tokens at 0 and every other word as 1
-      encoder_inputs, decoder_inputs, target_weights = model.get_batch(train_set,
-                                                                        bucket_id,
-                                                                        load_from_memory=FLAGS.load_train_set_in_memory)
+      encoder_inputs, decoder_inputs, encoder_input_lengths, decoder_input_lengths, target_weights = model.get_batch(train_set,
+                                                                                                                    load_from_memory=FLAGS.load_train_set_in_memory,
+                                                                                                                    use_all_rows=False)
       
       #Run a step of the model. 
       _, step_loss, _ = model.step(sess,
                                    encoder_inputs,
                                    decoder_inputs,
+                                   encoder_input_lengths,
+                                   decoder_input_lengths,
                                    target_weights,
-                                   bucket_id,
-                                   False)
+                                   forward_only=False)
 
       step_time += (time.time() - start_time) / FLAGS.steps_per_checkpoint
       loss += step_loss / FLAGS.steps_per_checkpoint
@@ -205,9 +170,9 @@ def train():
 
         # Print statistics for the previous epoch.
         perplexity = math.exp(float(loss)) if loss < 300 else float("inf")
-        print ("global step %d report:\n\tlearning rate %.6f\n\tstep-time %.2f\n\tperplexity "
+        print ("global step %d report:\n\tlearning rate %.6f\n\taverage step-time %.2f\n\taverage last %d batch perplexity "
                "%.4f" % (model.global_step.eval(), model.learning_rate.eval(),
-                         step_time, perplexity))
+                         step_time, FLAGS.steps_per_checkpoint, perplexity))
 
         # Decrease learning rate if no improvement was seen over last x times.
         if len(previous_losses) > 1 and loss > max(previous_losses[-1*FLAGS.loss_increases_per_decay:]):
@@ -218,37 +183,34 @@ def train():
         # Save checkpoint and zero timer and loss.
         checkpoint_path = os.path.join(FLAGS.data_dir, FLAGS.checkpoint_name)
         
-        #Only save the model if the loss is better than 
+        #Only save the model if the loss is better than any loss we've yet seen.
         if loss < lowest_loss:
           lowest_loss = loss
           print("new lowest loss. saving model")
           #TODO - wrap this in some sort of flag
           model.saver.save(sess, checkpoint_path, global_step=model.global_step)
-        else:
-          print("not saving model")
 
+        #Prepare for validation set evaluation
         step_time = 0.0
         loss = 0.0
 
-        # Run evals on development set and print their perplexity.
-        for bucket_id in xrange(len(_buckets)):
-          if len(dev_set[bucket_id]) == 0:
-            print("\teval on validation set: empty bucket %d" % (bucket_id))
-            continue
-          encoder_inputs, decoder_inputs, target_weights = model.get_batch(dev_set,
-                                                                          bucket_id,
-                                                                          load_from_memory=True)
+        print("Running Validation set...")
 
-          _, eval_loss, _ = model.step(sess,
-                                        encoder_inputs,
-                                        decoder_inputs,
-                                        target_weights,
-                                        bucket_id,
-                                        True)
+        encoder_inputs, decoder_inputs, encoder_input_lengths, decoder_input_lengths, target_weights = model.get_batch(dev_set,
+                                                                                                                      load_from_memory=True,
+                                                                                                                      use_all_rows=False)
 
-          eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float("inf")
+        _, eval_loss, _ = model.step(sess,
+                                      encoder_inputs,
+                                      decoder_inputs,
+                                      encoder_input_lengths,
+                                      decoder_input_lengths,
+                                      target_weights,
+                                      forward_only=True)
 
-          print("\teval on validation set: bucket %d perplexity %.4f" % (bucket_id, eval_ppx))
+        eval_ppx = math.exp(float(eval_loss)) if eval_loss < 300 else float("inf")
+
+        print("\teval on random batch of validation sentences: perplexity %.4f" % eval_ppx)
         sys.stdout.flush()
 
 
@@ -256,11 +218,12 @@ def decode():
   with tf.Session() as sess:
 
     #TODO - remove inference for best buckets if you're using a decoder. 
-    _buckets = bucket_utils.get_default_bucket_sizes(FLAGS.num_buckets)
+    #_buckets = bucket_utils.get_default_bucket_sizes(FLAGS.num_buckets)
 
     # Create model and load parameters.
-    model = create_model(sess, True, _buckets)
-    model.batch_size = 1  # We decode one sentence at a time.
+    model = create_model(sess, forward_only=True)
+
+    model.batch_size = 1  # We decode one sentence at a time, regardless of batch_size flag.
 
     # Load vocabularies.
     en_vocab_path = os.path.join(FLAGS.data_dir,
@@ -277,24 +240,38 @@ def decode():
     sys.stdout.flush()
     sentence = sys.stdin.readline()
     while sentence:
+
+      #TODO - CALL CLEANER HERE
       # Get token-ids for the input sentence.
-      token_ids = vocabulary_utils.sentence_to_token_ids(tf.compat.as_bytes(sentence), en_vocab)
-      # Which bucket does it belong to?
-      bucket_id = len(_buckets) - 1
-      for i, bucket in enumerate(_buckets):
-        if bucket[0] >= len(token_ids):
-          bucket_id = i
-          break
-      else:
+      sentence = tf.compat.as_bytes(sentence)
+      clean_sentence = vocabulary_utils.clean_sentence(sentence, language="en")
+      str_tokens = vocabulary_utils.vanilla_ft_tokenizer(clean_sentence)
+      print("\nYour sentence will be tokenized as follows:\n\t%s" % str(str_tokens))
+
+      token_ids = [en_vocab.get(word, vocabulary_utils.UNK_ID) for word in str_tokens]
+      print("\nYour sentence will be integerized as follows:\n\t%s" % str(token_ids))
+
+      if len(token_ids) > FLAGS.max_source_sentence_length:
         logging.warning("Sentence truncated: %s", sentence)
 
       # Get a 1-element batch to feed the sentence to the model.
-      encoder_inputs, decoder_inputs, target_weights = model.get_batch(
-          {bucket_id: [(token_ids, [])]}, bucket_id, load_from_memory=True)
+      # List has one element as input, a tuple
+      # The source token id's are the token's we just processed
+      # the target token id's are an empty list.
+      encoder_inputs, decoder_inputs, encoder_input_lengths, decoder_input_lengths, target_weights = model.get_batch(
+                                                                                                      [(token_ids, [])],
+                                                                                                      load_from_memory=True)
+
+      #TODO - explicitly set decoder input lengths to some large number?
 
       # Get output logits for the sentence.
-      _, _, output_logits = model.step(sess, encoder_inputs, decoder_inputs,
-                                       target_weights, bucket_id, True)
+      _, _, output_logits = model.step(sess,
+                                      encoder_inputs,
+                                      decoder_inputs,
+                                      encoder_input_lengths,
+                                      decoder_input_lengths,
+                                      target_weights,
+                                      forward_only=True)
 
       # This is a greedy decoder - outputs are just argmaxes of output_logits.
       outputs = [int(np.argmax(logit, axis=1)) for logit in output_logits]
@@ -311,6 +288,9 @@ def decode():
       sentence = sys.stdin.readline()
 
 
+
+
+#TODO - remove this or change it
 def self_test():
   """Test the translation model."""
   with tf.Session() as sess:

@@ -21,7 +21,7 @@ tf.app.flags.DEFINE_float("max_clipped_gradient", 5.0,
 
 
 #this should probably be a larger number than 16
-tf.app.flags.DEFINE_integer("batch_size", 16,
+tf.app.flags.DEFINE_integer("batch_size", 64,
                             "Batch size to use during training.")
 
 tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "Source language vocabulary size.")
@@ -54,23 +54,14 @@ tf.app.flags.DEFINE_boolean("use_fp16", False,
 #Checkpoint Flags
 tf.app.flags.DEFINE_string("checkpoint_name", "translate.ckpt", "Name of the Tensorflow checkpoint file")
 
-tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300,
+tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300, #change me to 300
                             "How many training steps to do per checkpoint.")
-
-
-#Bucket Sizes
-tf.app.flags.DEFINE_boolean("use_default_buckets", True, "Use the default bucket sizes defined in bucket_utils. Otherwise, will try candidate bucket sizes defined in bucket_utils")
-tf.app.flags.DEFINE_float("minimum_data_ratio_per_bucket", 0.1, "Each one of the buckets must have at least this ratio of the data in it.")
-tf.app.flags.DEFINE_integer("bucket_inference_sample_size", 1000000, "Only check this many data samples when trying to find the best distribution of the data for buckets")
-tf.app.flags.DEFINE_integer("num_buckets", 3, "Will use this number to look up default bucket sizes, otherwise use this number to find good division of data with this many buckets")
-
-
 
 #Dataset Flags
 tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
                             "If True, loads training set into memory. Otherwise, reads batches by opening files and reading appropriate lines.")
 
-tf.app.flags.DEFINE_integer("max_train_data_size", 200000,
+tf.app.flags.DEFINE_integer("max_train_data_size", 1000000,
                             "Limit on the size of training data (0: no limit).")
 
 tf.app.flags.DEFINE_integer("train_offset", 0,
@@ -79,44 +70,52 @@ tf.app.flags.DEFINE_integer("train_offset", 0,
 
 
 
+#==========================Data Preprocessing Flags===================================
+tf.app.flags.DEFINE_integer("max_source_sentence_length", 25,
+                            "the maximum number of tokens in the source sentence training example in order for the sentence pair to be able to be used in the dataset")
+
+tf.app.flags.DEFINE_integer("max_target_sentence_length", 35,
+                            "the maximum number of tokens in the target sentence training example in order for the sentence pair to be able to be used in the dataset")
+
+
+
 #Embedding Flags for Encoder and Decoder
 #Was 1024, 512
 
 
-tf.app.flags.DEFINE_string("embedding_algorithm", "glove",
+tf.app.flags.DEFINE_string("embedding_algorithm", "network",
                             "glove, fasttext, word2vec, or network. The first three are unsupervised trainers implemented by other programs. the latter is a network layer trained only by backprop")
 
 tf.app.flags.DEFINE_boolean("train_embeddings", True,
                             "Whether or not to continue training the glove embeddings from backpropagation or to leave them be")
 
-
-
-
-
-
-
-tf.app.flags.DEFINE_integer("encoder_embedding_size", 200,
+tf.app.flags.DEFINE_integer("encoder_embedding_size", 512,
                             "Number of units in the embedding size of the encoder inputs. This will be used in a wrapper to the first layer")
 #Was 1024, 512
 tf.app.flags.DEFINE_integer("decoder_embedding_size", 512,
                             "Number of units in the embedding size of the encoder inputs. This will be used in a wrapper to the first layer")
 
-tf.app.flags.DEFINE_string("glove_embedding_file", "GloVe/build/rob_vectors_50it.txt",
+#set where you want embedding file
+tf.app.flags.DEFINE_string("glove_encoder_embedding_file", "../translator/GloVe/build/rob_vectors_50it.txt",
+                            "The output file for Glove-trained word embeddings on the dataset.")
+tf.app.flags.DEFINE_string("glove_decoder_embedding_file", "../translator/GloVe/build/rob_vectors_50it_target.txt",
                             "The output file for Glove-trained word embeddings on the dataset.")
 
 
 #==========================================================================================
 
 
-#Was 1024, 512
-#LSTM Flags for Encoder and Decoder
-tf.app.flags.DEFINE_integer("encoder_hidden_size", 512,
+#TODO - delete this, they conflict with the json architecture support
+tf.app.flags.DEFINE_integer("encoder_hidden_size", 1024,
                             "Number of units in the hidden size of encoder LSTM layers. Bidirectional layers will therefore output 2*this")
 #Was 1024
-tf.app.flags.DEFINE_integer("decoder_hidden_size", 512,
+tf.app.flags.DEFINE_integer("decoder_hidden_size", 1024,
                             "Number of units in the hidden size of decoder LSTM layers. Bidirectional layers will therefore output 2*this")
 
 
+
+
+#TODO - initialize this
 #decoder_state_initializer's mechanism will depend on the implementation. there are a few different ways of doing it
 # essentially, you need to figure out what to do to the decoder state given the last encoder state, either just the top layer of it
 # or all layers of it. there are a few options
@@ -172,10 +171,6 @@ def flag_test():
     #build flag tests for the rest of the flags for input checking. like this...
     assert f.encoder_dropout_keep_probability <= 1.0 and f.encoder_dropout_keep_probability >= 0.0, "Encoder dropout keep probability must be between 0 and 1"
     assert f.decoder_dropout_keep_probability <= 1.0 and f.decoder_dropout_keep_probability >= 0.0, "Decoder dropout keep probability must be between 0 and 1"
-
-
-    assert f.num_buckets in [3], "Only 3 buckets are supported, for now, but you can easily change this. Just pass in bucket sizes."
-    assert f.num_buckets * f.minimum_data_ratio_per_bucket < 1, "Product of the number of buckets (%d) and the data ratio per bucket (%f) must be less than 1" % (f.num_buckets, f.minimum_data_ratio_per_bucket)
 
     assert os.path.isfile(f.encoder_decoder_architecture_json), "Invalid JSON file location passed for encoder architecture. Could not find %s" % f.encoder_architecture_json
     #TODO - add decoder as well

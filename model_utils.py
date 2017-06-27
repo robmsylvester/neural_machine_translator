@@ -241,13 +241,15 @@ def run_json_stack_architecture(model_json):
 #TODO - eventually embeddings will be initialized with pre-trained FastText (on the dataset? full pretrained?)...seems like high overfitting potential, and sort of cheating...so make it a flag option.
 def run_model(encoder_inputs,
               decoder_inputs,
+              encoder_input_lengths,
+              decoder_input_lengths,
               encoder_architecture,
               decoder_architecture,
               decoder_state_initializer,
               num_encoder_symbols,
               num_decoder_symbols,
               embedding_size,
-              embedding_algorithm=None,
+              embedding_algorithm="network",
               train_embeddings=True,
               num_heads=1,
               output_projection=None,
@@ -268,13 +270,24 @@ def run_model(encoder_inputs,
 
 
     #encoder outputs are a list of length batch_size
-    final_top_encoder_outputs, final_encoder_states = encoder.run_embedding_encoder(encoder_architecture,
-                                                                                    encoder_inputs,
-                                                                                    num_encoder_symbols,
-                                                                                    embedding_size,
-                                                                                    embedding_algorithm=embedding_algorithm,
-                                                                                    train_embeddings=train_embeddings,
-                                                                                    dtype=dtype)    
+    #final_top_encoder_outputs, final_encoder_states = encoder.dynamic_embedding_encoder(encoder_architecture,
+    #                                                                                encoder_inputs,
+    #                                                                                encoder_input_lengths,
+    #                                                                                num_encoder_symbols,
+    #                                                                                embedding_size,
+    #                                                                                embedding_algorithm=embedding_algorithm,
+    #                                                                                train_embeddings=train_embeddings,
+    #                                                                                dtype=dtype)
+
+
+    final_top_encoder_outputs, final_encoder_states = encoder.static_embedding_encoder(encoder_architecture,
+                                                                                        encoder_inputs,
+                                                                                        encoder_input_lengths,
+                                                                                        num_encoder_symbols,
+                                                                                        embedding_size,
+                                                                                        embedding_algorithm=embedding_algorithm,
+                                                                                        train_embeddings=train_embeddings,
+                                                                                        dtype=dtype)
 
     #Then we create an attention state by reshaping the encoder outputs. This amounts to creating an additional
     #dimension, namely attention_length, so that our attention states are of shape [batch_size, atten_len=1, atten_size=size of last lstm output]
@@ -288,6 +301,7 @@ def run_model(encoder_inputs,
           decoder_architecture,
           decoder_state_initializer,
           decoder_inputs,
+          decoder_input_lengths,
           final_encoder_states, #this is a list of lists of LSTMStateTuples or GRU States
           attention_states,
           num_decoder_symbols,
@@ -347,24 +361,21 @@ def sequence_loss_by_example(logits,
       else:
         crossent = softmax_loss_function(target, logit)
 
-      """
 
-      ROB, YOU LEFT OFF HERE.
 
-      If possible, abstract this away to get the target weight cross entropy gone for padded id words without explicitly storing it as a 
-      trainable variable in the model file
-      """
-      #if weight.value==0.:
-      #  assert(target==data_utils.PAD_ID, "If weight is 0, target id should be pad_id")
-      #elif weight.value==1:
-      #  assert(target.value!=data_utils.PAD_ID, "If weight is 1, target id should be anything other than the pad id")
+      #INSERT BOOSTING
+
+
+      #Sanity Check
+      #if weight==0.:
+      #  assert(target == data_utils.PAD_ID, "If weight is 0, target id should be pad_id")
+      #elif weight==1:
+      #  assert(target != data_utils.PAD_ID, "If weight is 1, target id should be anything other than the pad id")
       #else:
       #  print("weight came through that was not equal to 1.0 or 0.0")
       #  raise ValueError
-     
-      #print(weight.get_shape())
-      log_perp_list.append(crossent * weight)
 
+      log_perp_list.append(crossent * weight)
 
 
     log_perps = math_ops.add_n(log_perp_list)
@@ -418,14 +429,14 @@ def sequence_loss(logits,
 
 
 
-
-
-
-def model_with_buckets(encoder_inputs,
+def model_without_buckets(encoder_inputs,
                        decoder_inputs,
+                       max_encoder_length,
+                       max_decoder_length,
+                       encoder_input_lengths,
+                       decoder_input_lengths,
                        targets,
                        weights,
-                       buckets,
                        seq2seq,
                        softmax_loss_function=None,
                        per_example_loss=False,
@@ -439,18 +450,20 @@ def model_with_buckets(encoder_inputs,
   Args:
     encoder_inputs: A list of Tensors to feed the encoder; first seq2seq input.
     decoder_inputs: A list of Tensors to feed the decoder; second seq2seq input.
+    max_encoder_length: An int, truncate encoder inputs past this number
+    max_decoder_length: An int, truncate decoder inputs past this number
     targets: A list of 1D batch-sized int32 Tensors (desired output sequence).
     weights: List of 1D batch-sized float-Tensors to weight the targets.
-    buckets: A list of pairs of (input size, output size) for each bucket.
-    seq2seq: A sequence-to-sequence model function; it takes 2 input that
-      agree with encoder_inputs and decoder_inputs, and returns a pair
-      consisting of outputs and states (as, e.g., basic_rnn_seq2seq).
+    seq2seq: A sequence-to-sequence model function; it takes 4 input that
+      agree with encoder_inputs and decoder_inputs, and encoder_input_lengths
+      and decoder_input_lengths.
+      returns consist of outputs and states (as, e.g., basic_rnn_seq2seq).
     softmax_loss_function: Function (inputs-batch, labels-batch) -> loss-batch
       to be used instead of the standard softmax (the default if this is None).
     per_example_loss: Boolean. If set, the returned loss will be a batch-sized
       tensor of losses for each sequence in the batch. If unset, it will be
       a scalar with the averaged loss from all examples.
-    name: Optional name for this operation, defaults to "model_with_buckets".
+    name: Optional name for this operation, defaults to "model_without_buckets".
 
   Returns:
     A tuple of the form (outputs, losses), where:
@@ -460,44 +473,31 @@ def model_with_buckets(encoder_inputs,
         depending on the seq2seq model used.
       losses: List of scalar Tensors, representing losses for each bucket, or,
         if per_example_loss is set, a list of 1D batch-sized float Tensors.
-
-  Raises:
-    ValueError: If length of encoder_inputsut, targets, or weights is smaller
-      than the largest (last) bucket.
   """
-  if len(encoder_inputs) < buckets[-1][0]:
-    raise ValueError("Length of encoder_inputs (%d) must be at least that of la"
-                     "st bucket (%d)." % (len(encoder_inputs), buckets[-1][0]))
-  if len(targets) < buckets[-1][1]:
-    raise ValueError("Length of targets (%d) must be at least that of last"
-                     "bucket (%d)." % (len(targets), buckets[-1][1]))
-  if len(weights) < buckets[-1][1]:
-    raise ValueError("Length of weights (%d) must be at least that of last"
-                     "bucket (%d)." % (len(weights), buckets[-1][1]))
-
   all_inputs = encoder_inputs + decoder_inputs + targets + weights
-  losses = []
-  outputs = []
-  with ops.name_scope(name, "model_with_buckets", all_inputs):
-    for j, bucket in enumerate(buckets):
-      with variable_scope.variable_scope(
-          variable_scope.get_variable_scope(), reuse=True if j > 0 else None):
-        bucket_outputs, _ = seq2seq(encoder_inputs[:bucket[0]],
-                                    decoder_inputs[:bucket[1]])
-        outputs.append(bucket_outputs)
-        if per_example_loss:
-          losses.append(
-              sequence_loss_by_example(
-                  outputs[-1],
-                  targets[:bucket[1]],
-                  weights[:bucket[1]],
-                  softmax_loss_function=softmax_loss_function))
-        else:
-          losses.append(
-              sequence_loss(
-                  outputs[-1],
-                  targets[:bucket[1]],
-                  weights[:bucket[1]],
-                  softmax_loss_function=softmax_loss_function))
+  with ops.name_scope(name, "model_without_buckets", all_inputs):
+    #with variable_scope.variable_scope(
+    #    variable_scope.get_variable_scope(), reuse=True if j > 0 else None):
+    with variable_scope.variable_scope(variable_scope.get_variable_scope()):
+
+      assert len(encoder_inputs) == max_encoder_length
+      assert len(decoder_inputs) == max_decoder_length+1
+
+      outputs, _ = seq2seq(encoder_inputs[:max_encoder_length],
+                           decoder_inputs[:max_decoder_length], #TODO check not off by one here
+                           encoder_input_lengths,
+                           decoder_input_lengths)
+      if per_example_loss:
+        losses = sequence_loss_by_example(
+                  outputs,
+                  targets[:max_decoder_length],
+                  weights[:max_decoder_length],
+                  softmax_loss_function=softmax_loss_function)
+      else:
+        losses = sequence_loss(
+                outputs,
+                targets[:max_decoder_length],
+                weights[:max_decoder_length],
+                softmax_loss_function=softmax_loss_function)
 
   return outputs, losses

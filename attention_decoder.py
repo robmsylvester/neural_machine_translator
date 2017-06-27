@@ -51,6 +51,7 @@ def _create_decoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
 def _create_decoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
   raise NotImplementedError
 
+
 #This needs a lot more arguments...
 #final_encoder_states - a list of lists containing 1 or 2 LSTM State Tuple/GRU States, depending on if that layer was bidirectional
 #num_decoder_layers, an integer representing the depth of the stack of LSTMS/GRU's, but just for sanity until likely removed.
@@ -84,10 +85,21 @@ def initialize_decoder_states_from_final_encoder_states(final_encoder_states, de
   #
 
 
-def _prepare_top_encoder_state(top_states):
-#top states is a list of encoder states at the top layer of the encoder stack.
-# this list might be a single tensor representing the state of the cell, or an lstm state tuple
+def _prepare_top_lstm_encoder_state(top_states):
+  """
+  Takes a look at the top states of the encoder stack, which should be LSTM State Tuples
+  There is probably just one LSTM state tuple, but there will be two if they are bidirectional at the top layer of encoder.
+  If they are not bidirectional, just return the LSTM
+  If they are bidirectional, concatenate the cell states and hidden states of the two tuples together and return a single
+   LSTMStateTuple of size (2x cell state, 2x hidden state)
 
+  #Parameters:
+  #top states is a list of encoder states at the top layer of the encoder stack.
+  # this list might be a single lstm state tuple, or a list of lstm state tuples
+
+  #Returns:
+   LSTM state tuple.
+  """
   assert isinstance(top_states, (list)), "top states must be a list"
   is_lstm_tuple = top_states[0].__class__.__name__ == 'LSTMStateTuple' #otherwise it is a GRU
 
@@ -106,8 +118,7 @@ def _prepare_top_encoder_state(top_states):
       top_encoder_state = core_rnn_cell_impl.LSTMStateTuple(new_c, new_h)
 
     else:
-      raise NotImplementedError, "Expected lstm state tuple. it isn't. gru not yet supported"
-      top_encoder_state = tf.concat([top_states[0], top_states[1]], axis=1) #concat the bidirectional GRU hidden states
+      raise NotImplementedError, "Expected lstm state tuple. it isn't."
   
   elif len(top_states) == 1:
     top_encoder_state = top_states[0] #just a single lstm state tuple, so we're good
@@ -199,78 +210,18 @@ def validate_attention_decoder_inputs(decoder_inputs, num_heads, attention_state
   return attn_length, attn_size
 
 
-# this runs a 4-layer LSTM with residual connections from layers 0 -> 2, 0 -> 3, and 1 -> 3, and with no bidirectionality.
-#
-#parameters - 
-#attn_input, Tensor, will be the attentive input to the decoder in all cases
-#hidden states are the hidden states of the LSTM's at each layer in the stack. must be equal to the number of layers.
-#scope is the scope with which to run this function, and for now is a keyword argument that I should probably clean up.
-#
-# returns - 
-#
-#TODO - modularize this to read from JSON like I did with image project
-def decoder_rnn(attn_input, hidden_states_stack, num_layers=None):
-
-  #print("in decoder rnn")
-  ##print(type(hidden_states_stack))
-  #print(type(hidden_states_stack[0]))
-  #print(hidden_states_stack[0].get_shape())
+def dynamic_decoder(decoder_json, attn_input, input_lengths, hidden_states_stack, dtype=None):
+  pass
 
 
-  if num_layers != len(hidden_states_stack):
-    raise ValueError("expected %d hidden states. instead only see %d hidden states" % (num_layers, len(hidden_states_stack)))
-
-  with variable_scope.variable_scope('decoder_layer_0') as scope:
-    fw0 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
-                        FLAGS.decoder_use_peepholes,
-                        FLAGS.decoder_init_forget_bias,
-                        FLAGS.decoder_dropout_keep_probability)
-    outputs0, hidden_states_stack[0] = fw0(attn_input, hidden_states_stack[0], scope=scope)
-
-    #print("at the end of the decoder_rnn layer 1, the scope name is %s" % scope.name)
-  with variable_scope.variable_scope('decoder_layer_1') as scope:
-    fw1 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
-                        FLAGS.decoder_use_peepholes,
-                        FLAGS.decoder_init_forget_bias,
-                        FLAGS.decoder_dropout_keep_probability)
-    outputs1, hidden_states_stack[1] = fw1(outputs0, hidden_states_stack[1], scope=scope)
-    #print("at the end of the decoder_rnn layer 2, the scope name is %s" % scope.name)  
-  with variable_scope.variable_scope('decoder_layer_2') as scope:
-    fw2 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
-                        FLAGS.decoder_use_peepholes,
-                        FLAGS.decoder_init_forget_bias,
-                        FLAGS.decoder_dropout_keep_probability)
-
-    #add a residual connection to the outputs from the first layer
-    #we don't need to call unstack here because the inputs into the __call__ function of the LSTMCell
-    #are a single tensor, not a list of tensors.
-    inputs2 = tf.add_n([outputs0,outputs1], name="residual_decoder_layer2_input")
-    outputs2, hidden_states_stack[2] = fw2(inputs2, hidden_states_stack[2], scope=scope)
-    #print("at the end of the decoder_rnn layer 3, the scope name is %s" % scope.name)
-  with variable_scope.variable_scope('decoder_layer_3') as scope:
-    fw3 = _create_decoder_lstm(FLAGS.decoder_hidden_size,
-                        FLAGS.decoder_use_peepholes,
-                        FLAGS.decoder_init_forget_bias,
-                        FLAGS.decoder_dropout_keep_probability)
-
-    #add a reisdual connection to the outputs from the second layer
-    inputs3 = tf.add_n([outputs1, outputs2], name="residual_decoder_layer4_input")
-    outputs3, hidden_states_stack[3] = fw3(inputs3, hidden_states_stack[3], scope=scope)
-    #print("at the end of the decoder_rnn layer 4, the scope name is %s" % scope.name)
-  output_size = fw3.output_size
-
-  #we only care about the final output, but we need all the hidden cell states to pass back to this function later
-  return outputs3, hidden_states_stack, output_size
-
-
-def decoder_rnn_NEW(decoder_json, attn_input, hidden_states_stack, dtype=None):
+def static_decoder(decoder_json, attn_input, input_lengths, hidden_states_stack, dtype=None):
 
 #Runs a decoder RNN for use with an attention mechanism. Note this is different than the encoder RNN
 # precisely because of this attention mechanism, and this is why we have the hidden states stack.
 # this stack will be used so that we can pass in an initial state for the different layers in the 
 # decoder stack when we are outputting.
 
-  #print("\t\tDUDE, we're in the decoder now!")
+  #sanity checks if you want them
   #print("\t\ttype of hidden states stack is %s" % str(type(hidden_states_stack)))
   #print("\t\ttype of first element in this stack is %s" % str(type(hidden_states_stack[0])))
   #print("\t\ttype of first element in the first list of this stack is %s" % str(type(hidden_states_stack[0][0])))
@@ -490,6 +441,7 @@ def run_bahdanu_attention_mechanism(query_state,
 def attention_decoder(decoder_architecture,
                       decoder_state_initializer,
                       decoder_inputs,
+                      decoder_input_lengths,
                       final_encoder_states, #This is a LIST
                       attention_states,
                       output_size=None,
@@ -502,7 +454,6 @@ def attention_decoder(decoder_architecture,
 
   Implementation based on http://arxiv.org/abs/1412.7449 
 
-  Rob Documentation:
     Arguments:
 
     decoder-inputs: This is a list of 2D Tensors of shape [batch_size, input_size].
@@ -516,13 +467,14 @@ def attention_decoder(decoder_architecture,
       lstm cell state in the final layer of the encoder. If using GRU's, then final_encoder_states[4]
       would be the final hidden state for the 5th layer GRU in the encoder.
 
-  
-  Argumentss:
-    decoder_inputs: A list of 2D Tensors [batch_size x input_size].
-    attention_states: 3D Tensor [batch_size x attn_length x attn_size].
-    cell: tf.nn.rnn_cell.RNNCell defining the cell function and size.
-    output_size: Size of the output vectors; if None, we use cell.output_size.
-    num_heads: Number of attention heads that read from attention_states.
+    decoder_input_lengths - list of integers with lengths of sentences
+
+    attention_states: 3D Tensor [batch_size x attn_length x attn_size]
+
+    output_size: Size of the output vectors; if None, we use cell.output_size
+
+    num_heads: Number of attention heads that read from attention_states
+
     loop_function: If not None, this function will be applied to i-th output
       in order to generate i+1-th input, and decoder_inputs will be ignored,
       except for the first element ("GO" symbol). This can be used for decoding,
@@ -620,7 +572,7 @@ def attention_decoder(decoder_architecture,
       #This is a lot of work for initial state attention, maybe we should just tell this feature to fuck off
       #TODO = eventually this should get abstracted away probably
       top_encoder_state_list = final_encoder_states[-1]
-      reshaped_top_encoder_state = _prepare_top_encoder_state(top_encoder_state_list)
+      reshaped_top_encoder_state = _prepare_top_lstm_encoder_state(top_encoder_state_list)
 
       attentions = run_bahdanu_attention_mechanism(reshaped_top_encoder_state,
                                       reshaped_attention_states,
@@ -655,7 +607,6 @@ def attention_decoder(decoder_architecture,
       # If loop_function is set, we use it instead of decoder_inputs.
       if loop_function is not None and previous_decoder_output is not None:
         with variable_scope.variable_scope("loop_function", reuse=True):
-          print("\t\t\tthe loop function is not none")
           decoder_input = loop_function(previous_decoder_output, decoder_time_step)
 
       #TODO - refactor this
@@ -679,8 +630,9 @@ def attention_decoder(decoder_architecture,
       # (other than the whole-attention-mechanism thing) is that this decoder call runs for ONE time step
       #decoder output is a list with a single tensor. eventually this list could be removed
       #decoder hidden states is a list of lists of tensors
-      decoder_output, decoder_hidden_states = decoder_rnn_NEW(decoder_architecture,
+      decoder_output, decoder_hidden_states = static_decoder(decoder_architecture,
                                                               attentive_input,
+                                                              decoder_input_lengths,
                                                               decoder_hidden_states,
                                                               dtype=dtype)
 
@@ -730,10 +682,10 @@ def attention_decoder(decoder_architecture,
   return outputs, top_decoder_state
 
 
-
 def embedding_attention_decoder(decoder_architecture,
                                 decoder_state_initializer,
                                 decoder_inputs,
+                                decoder_input_lengths,
                                 final_encoder_states,
                                 attention_states,
                                 num_symbols,
@@ -842,6 +794,7 @@ def embedding_attention_decoder(decoder_architecture,
         decoder_architecture,
         decoder_state_initializer,
         embedding_inputs,
+        decoder_input_lengths,
         final_encoder_states, #TODO this is a LIST, make changes accordingly
         attention_states,
         output_size=None,

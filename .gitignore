@@ -1,3 +1,4 @@
 *.pyc
 tensorflow-glove/*
 GloVe/*
+old_translator_before_dynamic/*
