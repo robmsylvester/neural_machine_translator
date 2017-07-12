@@ -1,69 +1,13 @@
-# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
-"""Library for creating sequence-to-sequence models in TensorFlow.
-
-Sequence-to-sequence recurrent neural networks can learn complex functions
-that map input sequences to output sequences. These models yield very good
-results on a number of tasks, such as speech recognition, parsing, machine
-translation, or even constructing automated replies to emails.
-
-Before using this module, it is recommended to read the TensorFlow tutorial
-on sequence-to-sequence models. It explains the basic concepts of this module
-and shows an end-to-end example of how to build a translation model.
-  https://www.tensorflow.org/versions/master/tutorials/seq2seq/index.html
-
-Here is an overview of functions available in this module. They all use
-a very similar interface, so after reading the above tutorial and using
-one of them, others should be easy to substitute.
-
-* Full sequence-to-sequence models.
-  - basic_rnn_seq2seq: The most basic RNN-RNN model.
-  - tied_rnn_seq2seq: The basic model with tied encoder and decoder weights.
-  - embedding_rnn_seq2seq: The basic model with input embedding.
-  - embedding_tied_rnn_seq2seq: The tied model with input embedding.
-  - embedding_attention_seq2seq: Advanced model with input embedding and
-      the neural attention mechanism; recommended for complex tasks.
-
-* Multi-task sequence-to-sequence models.
-  - one2many_rnn_seq2seq: The embedding model with multiple decoders.
-
-* Decoders (when you write your own encoder, you can use these to decode;
-    e.g., if you want to write a model that generates captions for images).
-  - rnn_decoder: The basic decoder based on a pure RNN.
-  - attention_decoder: A decoder that uses the attention mechanism.
-
-* Losses.
-  - sequence_loss: Loss for a sequence model returning average log-perplexity.
-  - sequence_loss_by_example: As above, but not averaging over all examples.
-
-* model_with_buckets: A convenience function to create models with bucketing
-    (see the tutorial above for an explanation of why and how to use it).
-"""
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-# We disable pylint because we need python3 compatibility.
 from six.moves import zip  # pylint: disable=redefined-builtin
 import tensorflow as tf
 from tensorflow.python import shape
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import variable_scope
@@ -400,8 +344,6 @@ def sequence_loss_by_example(logits,
             labels=target, logits=logit)
       else:
         crossent = softmax_loss_function(target, logit)
-
-
 
       #TODO - INSERT BOOSTING on average sentence score per logit per some number of iterations
 
