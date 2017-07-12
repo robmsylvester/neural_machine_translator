@@ -656,8 +656,8 @@ def initialize_glove_embeddings_tensor(num_enc_symbols, embed_size, embedding_fi
   embeddings = np.zeros(shape=(num_enc_symbols, embed_size), dtype=np.float32) #TODO - fix this dtype
 
   #PAD can remain all zeros, so let's just not deal with it.
-
-  #TODO, for now, randomize the _GO symbols. alternatively could use glove with them and skip this part
+  
+  #randomize the _GO symbols
   embeddings[1] = np.random.uniform(low=-1.0, high=1.0, size=embed_size)
 
   #randomize the _EOS symbols

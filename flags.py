@@ -103,16 +103,16 @@ tf.app.flags.DEFINE_integer("max_target_sentence_length", 45,
 #Embedding Flags for Encoder and Decoder
 #Was 1024, 512
 #===========================Word Embeddings=====================================
-tf.app.flags.DEFINE_string("embedding_algorithm", "glove",
+tf.app.flags.DEFINE_string("embedding_algorithm", "network",
                             "glove, or network. The first three are unsupervised trainers implemented by other programs. the latter is a network layer trained only by backprop")
 
 tf.app.flags.DEFINE_boolean("train_embeddings", True,
                             "Whether or not to continue training the glove embeddings from backpropagation or to leave them be")
 
-tf.app.flags.DEFINE_integer("encoder_embedding_size", 200,
+tf.app.flags.DEFINE_integer("encoder_embedding_size", 512,
                             "Number of units in the embedding size of the encoder inputs. This will be used in a wrapper to the first layer")
 #Was 1024, 512
-tf.app.flags.DEFINE_integer("decoder_embedding_size", 200,
+tf.app.flags.DEFINE_integer("decoder_embedding_size", 512,
                             "Number of units in the embedding size of the encoder inputs. This will be used in a wrapper to the first layer")
 
 tf.app.flags.DEFINE_string("glove_encoder_embedding_file", "../translator/GloVe/build/rob_vectors_50it_200vec_source.txt",
@@ -128,12 +128,16 @@ tf.app.flags.DEFINE_string("glove_decoder_embedding_file", "../translator/GloVe/
 tf.app.flags.DEFINE_integer("batch_size", 32, #64 would be good, 128 is better.
                             "Batch size to use during training.")
 
+
+#TODO - add to json, implement and test
 tf.app.flags.DEFINE_integer("num_attention_heads", 1,
                             "The number of heads to use in the attention mechanism")
+
 
 tf.app.flags.DEFINE_integer("sampled_softmax_size", 512, #64 would be good, 128 is better.
                             "Sampled Softmax will use this many logits out of the vocab size for the probability estimate of the true word")
 
+#TODO - 
 tf.app.flags.DEFINE_boolean("decoder_vocab_boosting", True,
                             "adaboost decoder prediction weights in the loss function based on perplexities of sentences that contain that word")
 
@@ -166,7 +170,7 @@ tf.app.flags.DEFINE_integer("vocab_boost_occurrence_memory", 100,
 #                concatenated in the event that the top layer of the encoder is bidirectional.
 #                this is passed through a hyperbolic tangent as well. 
 #
-tf.app.flags.DEFINE_string("decoder_state_initializer", "bahdanu",
+tf.app.flags.DEFINE_string("decoder_state_initializer", "top_layer_mirror",
                            "The strategy used to calculate initial state values for the decoder from the encoder")
 
 

@@ -192,7 +192,6 @@ def train():
         if loss < lowest_loss:
           lowest_loss = loss
           print("new lowest loss. saving model")
-          #TODO - wrap this in some sort of flag
           model.saver.save(sess, checkpoint_path, global_step=model.global_step)
 
         #Prepare for validation set evaluation
@@ -222,12 +221,8 @@ def train():
 def decode():
   with tf.Session() as sess:
 
-    #TODO - remove inference for best buckets if you're using a decoder. 
-    #_buckets = bucket_utils.get_default_bucket_sizes(FLAGS.num_buckets)
-
     # Create model and load parameters.
     model = create_model(sess, forward_only=True)
-
     model.batch_size = 1  # We decode one sentence at a time, regardless of batch_size flag.
 
     # Load vocabularies.
@@ -246,7 +241,6 @@ def decode():
     sentence = sys.stdin.readline()
     while sentence:
 
-      #TODO - CALL CLEANER HERE
       # Get token-ids for the input sentence.
       sentence = tf.compat.as_bytes(sentence)
       clean_sentence = vocabulary_utils.clean_sentence(sentence, language="en")
@@ -286,31 +280,9 @@ def decode():
       # If there is an EOS symbol in outputs, cut them at that point.
       if vocabulary_utils.EOS_ID in outputs:
         outputs = outputs[:outputs.index(vocabulary_utils.EOS_ID)]
+
       # Print out French sentence corresponding to outputs.
       print(" ".join([tf.compat.as_str(rev_fr_vocab[output]) for output in outputs]))
-      print("> ", end="")
+      print(">", end="")
       sys.stdout.flush()
       sentence = sys.stdin.readline()
-
-
-
-
-#TODO - remove this or change it
-def self_test():
-  """Test the translation model."""
-  with tf.Session() as sess:
-    print("Self-test for neural translation model.")
-    # Create model with vocabularies of 10, 2 small buckets, 2 layers of 32.
-    model = seq2seq_model.Seq2SeqModel(10, 10, [(3, 3), (6, 6)], 32, 2,
-                                       5.0, 32, 0.3, 0.99, num_samples=8)
-    sess.run(tf.global_variables_initializer())
-
-    # Fake data set for both the (3, 3) and (6, 6) bucket.
-    data_set = ([([1, 1], [2, 2]), ([3, 3], [4]), ([5], [6])],
-                [([1, 1, 1, 1, 1], [2, 2, 2, 2, 2]), ([3, 3, 3], [5, 6])])
-    for _ in xrange(5):  # Train the fake model for 5 steps.
-      bucket_id = random.choice([0, 1])
-      encoder_inputs, decoder_inputs, target_weights = model.get_batch(
-          data_set, bucket_id, load_from_memory=True)
-      model.step(sess, encoder_inputs, decoder_inputs, target_weights,
-                 bucket_id, False)

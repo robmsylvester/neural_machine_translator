@@ -107,8 +107,6 @@ def _initialize_decoder_states_bahdanu(final_encoder_state_tensor, decoder_archi
   return initial_decoder_state_tensors
 
 
-      
-
 #final_encoder_states - a list of lists containing 1 or 2 LSTM State Tuple/GRU States, depending on if that layer was bidirectional
 #num_decoder_layers, an integer representing the depth of the stack of LSTMS/GRU's, but just for sanity until likely removed.
 #returns the state for the decoder to start as a list itself, indexed by stack depth of the lstm or gru.
@@ -122,10 +120,10 @@ def initialize_decoder_states_from_final_encoder_states(final_encoder_states, de
     return final_encoder_states #the encoder states will be used 1-for-1 in the decoder architecture because it's exactly the same
 
   elif decoder_state_initializer == "top_layer_mirror":
-    
+
     #this won't necessarily work for all arbitrary geometries? i think its okay, UNLESS we mix GRU's with LSTM's
     #it also won't work if the top layer was bidirectional because we concatenated the states!
-    if len(final_encoder_states[-1] == 2):
+    if len(final_encoder_states[-1]) == 2:
       combined_lstm_tuple = _concatenate_bidirectional_lstm_state_tuples(final_encoder_states[-1][0], final_encoder_states[-1][1])    
       return [ [combined_lstm_tuple] for _ in xrange(decoder_architecture['num_layers'])] #a list of lists of LSTM State Tuples
     else:
@@ -143,8 +141,8 @@ def initialize_decoder_states_from_final_encoder_states(final_encoder_states, de
 
 #Simple function to combine the cell states and hidden states for multiple LSTMS into a single concatenated tensor
 def _concatenate_bidirectional_lstm_state_tuples(lstm_fw_state_tuple, lstm_bw_state_tuple):
-  assert lstm_state_tuple_1.__class__.__name__ == 'LSTMStateTuple'
-  assert lstm_state_tuple_2.__class__.__name__ == 'LSTMStateTuple'
+  assert lstm_fw_state_tuple.__class__.__name__ == 'LSTMStateTuple'
+  assert lstm_bw_state_tuple.__class__.__name__ == 'LSTMStateTuple'
 
   new_c = tf.concat([lstm_fw_state_tuple[0], lstm_bw_state_tuple[0]], axis=1 ) #combine c from both LSTMS
   new_h = tf.concat([lstm_fw_state_tuple[1], lstm_bw_state_tuple[1]], axis=1 ) #combine h from both LSTMS

@@ -396,11 +396,11 @@ class seq2seqEDA(object):
       encoder_pad = [vocabulary_utils.PAD_ID] * (self.max_encoder_length - len(encoder_input))
 
       # Then we reverse the inputs as per Cho's recommendations
-      #TODO - this is a major problem, because we can't have sequence lengths on the padded input
+      #we because we can't have sequence lengths on the padded input
       #encoder_inputs.append(list(reversed(encoder_input + encoder_pad)))
-      encoder_inputs.append(encoder_input+encoder_pad)
 
-      #TODO - SOLUTION MIGHT BE THIS?
+      #not reversing inputs. using dynamic length setting instead
+      encoder_inputs.append(encoder_input+encoder_pad)
       #encoder_inputs.append(list(reversed(encoder_pad + encoder_input)))
 
       # Decoder inputs get an extra "GO" symbol since we feed previous outputs to a decoder, and this will handle that placeholder spot
