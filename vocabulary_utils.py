@@ -9,9 +9,10 @@ import tarfile
 
 from six.moves import urllib
 from tensorflow.python.platform import gfile
+from collections import OrderedDict
 import download_utils
-import bucket_utils
 import tensorflow as tf
+import numpy as np
 
 # Special vocabulary symbols - we always put them at the start.
 
@@ -144,7 +145,7 @@ def clean_sentence(sentence, language="en"):
     sentence = re.sub('Œ', 'œ', sentence)
     sentence = re.sub('0', ' zéro ', sentence)
     sentence = re.sub('1', ' un ', sentence)
-    sentence = re.sub('2', ' duex ', sentence)
+    sentence = re.sub('2', ' deux ', sentence)
     sentence = re.sub('3', ' trois ', sentence)
     sentence = re.sub('4', ' quatre ', sentence)
     sentence = re.sub('5', ' cinq ', sentence)
@@ -216,13 +217,6 @@ def clean_enfr_wmt_data(output_file,
         for token in tokens:
           to_write += token + ' ' #append a space after each word
 
-        #
-        #
-        #             BIG TO DO  
-        #
-        #    It might be better to take care of the end of sentence tag here so we can conform to standards with the unsupervised layer.
-        #    For example, fasttext uses a </s> symbol for the end of sentences.
-        #
         #We do NOT need to add an _EOS tag. We can just reference it in the trainer.
         to_write += '\n'
         
@@ -556,25 +550,11 @@ def prepare_data(data_dir, from_train_path, to_train_path, from_dev_path, to_dev
   integerize_sentences(to_clean_dev_path, to_dev_ids_path, to_vocab_path)
   integerize_sentences(from_clean_dev_path, from_dev_ids_path, from_vocab_path)
 
-  #
   # Stats - using 40,000 english and french words and default vanilla tokenizer gives about 1.4% english unknown and 1.7% french unknown words.
   # For reference, "the" occurs at about a 5% hit rate for the english dataset.
-  #
-  #
-  #
-
   return (from_train_ids_path, to_train_ids_path,
           from_dev_ids_path, to_dev_ids_path,
           from_vocab_path, to_vocab_path)
-
-
-#to be called after load_dataset_in_memory
-def learn_glove_embeddings(source_path, target_path):
-  """
-  Reads
-  """
-  pass
-
 
 
 
@@ -612,7 +592,7 @@ def load_dataset_in_memory(source_path,
   """
 
   data_set = []
-  unbucketed_data_ratio = 0.
+  bucketed_data_ratio = 0.
 
   with tf.gfile.GFile(source_path, mode="r") as source_file:
     with tf.gfile.GFile(target_path, mode="r") as target_file:
@@ -661,5 +641,71 @@ def load_dataset_in_memory(source_path,
         source = source_file.readline()
         target = target_file.readline()
 
-  unbucketed_data_ratio = float(used_sentence_pairs) / (used_sentence_pairs+unused_sentence_pairs)
-  return data_set, unbucketed_data_ratio
+  bucketed_data_ratio = float(used_sentence_pairs) / (used_sentence_pairs+unused_sentence_pairs)
+  return data_set, bucketed_data_ratio
+
+
+
+def initialize_glove_embeddings_tensor(num_enc_symbols, embed_size, embedding_file, vocab_verification_file, dtype=None):
+
+  if not gfile.Exists(embedding_file):
+    raise IOError("Embedding file location %s not found" % embedding_file)
+  if not gfile.Exists(vocab_verification_file):
+    raise IOError("Vocab file location %s not found" % vocab_verification_file)
+
+  embeddings = np.zeros(shape=(num_enc_symbols, embed_size), dtype=np.float32) #TODO - fix this dtype
+
+  #PAD can remain all zeros, so let's just not deal with it.
+
+  #TODO, for now, randomize the _GO symbols. alternatively could use glove with them and skip this part
+  embeddings[1] = np.random.uniform(low=-1.0, high=1.0, size=embed_size)
+
+  #randomize the _EOS symbols
+  embeddings[2] = np.random.uniform(low=-1.0, high=1.0, size=embed_size)
+
+  #randomize the _UNK symbols
+  embeddings[3] = np.random.uniform(low=-1.0, high=1.0, size=embed_size)
+
+  #load the pre-trained vectors
+  limit = num_enc_symbols
+
+  embed_dict = OrderedDict()
+  with gfile.GFile(embedding_file, mode="rb") as ef:
+    for line in ef:
+      emb = line.split()
+      vector = emb[1:] #0 is the word, 1: are the word vectors, of which there are 200-300 or 512 or something
+      vector = [float(i) for i in vector]
+      embed_dict[str(emb[0])] = vector
+
+  with gfile.GFile(vocab_verification_file, mode="rb") as vf:
+
+      print("Building and verifying glove embedding tensors against vocabulary files.")
+
+      #get a word in the vocab file
+      words_read=0
+      for line in vf:
+        word = line.split()[0]
+
+        #skip the first four words
+        if word in _INITIAL_VOCABULARY:
+          words_read += 1
+          assert words_read <= len(_INITIAL_VOCABULARY), "all initial vocabulary words are expected to come first in a vocab file."
+          continue
+        found=False
+
+        #place the word vector in the numpy array at the right index
+        try:
+          embeddings[words_read] = embed_dict[word]
+        except KeyError, err:
+          print("The word %s did not occur in the embedding glove file" % word)
+          print(err)
+          raise
+        
+        words_read += 1
+
+        #and quit if we hit our limit in the event that we are testing
+        if limit == words_read:
+          print("Cutting off vocabulary file at line limit %d. Size of dictionary is %d" % (limit, len(embeddings)))
+          break
+
+  return tf.convert_to_tensor(embeddings, dtype=dtype)

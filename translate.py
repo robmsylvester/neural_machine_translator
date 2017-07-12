@@ -43,7 +43,6 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 
 import vocabulary_utils
-import bucket_utils
 import download_utils
 import seq2seqEDA
 
@@ -72,6 +71,7 @@ def create_model(session, forward_only):
       FLAGS.encoder_decoder_architecture_json,
       FLAGS.max_source_sentence_length,
       FLAGS.max_target_sentence_length,
+      softmax_sample_size=FLAGS.sampled_softmax_size,
       forward_only=forward_only,
       dtype=dtype)
   ckpt = tf.train.get_checkpoint_state(FLAGS.data_dir)
@@ -179,6 +179,11 @@ def train():
           sess.run(model.learning_rate_decay_op)
           print("Decayed learning rate after seeing %d consecutive increases in perplexity" % FLAGS.loss_increases_per_decay)
         previous_losses.append(loss)
+
+        #Boost target weights
+        #if FLAGS.decoder_vocab_boosting:
+          #print("running target weight boost op")
+          #sess.run(model.target_weight_boosting_op)
 
         # Save checkpoint and zero timer and loss.
         checkpoint_path = os.path.join(FLAGS.data_dir, FLAGS.checkpoint_name)

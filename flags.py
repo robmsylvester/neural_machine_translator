@@ -2,9 +2,28 @@ import tensorflow as tf
 import os
 import sys
 
+#==========================Regularization===============================================
+#tf.app.flags.DEFINE_boolean("l2_loss", False,
+#                            "Not currently implemented. Adds L2 loss term to parameter weights in encoder and attention decoder")
+#tf.app.flags.DEFINE_float("l2_loss_lambda", 0.00,
+#                           "Not currently implemented. Adds L2 loss term to parameter weights in encoder and attention decoder")
 
-##===================Gradients and learning rate===================================
-#TODO - make this trainable and saveable so it doesn't reload at 0.5
+
+
+#==========================Basic Execution Options======================================
+tf.app.flags.DEFINE_boolean("decode", False,
+                            "Set to True for interactive decoding.")
+
+tf.app.flags.DEFINE_boolean("self_test", False,
+                            "Run a self-test if this is set to True. Overrides decode flag")
+
+
+
+#=================================Learning Rate==============================================
+#TODO - abstract this away into a learning rate schedule
+tf.app.flags.DEFINE_integer("loss_increases_per_decay", 3,
+                            "The learning rate will decay if the loss is greater than the max of the last (this many) checkpoint losses.")
+
 tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
 
 tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
@@ -12,19 +31,18 @@ tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
 
 tf.app.flags.DEFINE_float("minimum_learning_rate", 0.005, "Minimum learning rate")
 
+
+
+
+#=======================Gradient Clipping====================================================
 tf.app.flags.DEFINE_float("max_clipped_gradient", 5.0,
                           "Clip gradients to a maximum of this this norm.")
-#==========================================================================================
 
 
 
 
-
-#this should probably be a larger number than 16
-tf.app.flags.DEFINE_integer("batch_size", 64,
-                            "Batch size to use during training.")
-
-tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "Source language vocabulary size.")
+#=======================Vocabulary File Locations and Save File Locations=======================
+tf.app.flags.DEFINE_integer("from_vocab_size", 40000, "Source language vocabulary size.") #20-50k is good
 
 tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "Target language vocabulary size.")
 
@@ -38,17 +56,12 @@ tf.app.flags.DEFINE_string("from_dev_data", None, "Validation data.")
 
 tf.app.flags.DEFINE_string("to_dev_data", None, "Validation data.")
 
-tf.app.flags.DEFINE_integer("loss_increases_per_decay", 3,
-                            "The learning rate will decay if the loss is greater than the max of the last (this many) checkpoint losses.")
 
-tf.app.flags.DEFINE_boolean("decode", False,
-                            "Set to True for interactive decoding.")
 
-tf.app.flags.DEFINE_boolean("self_test", False,
-                            "Run a self-test if this is set to True.")
 
 tf.app.flags.DEFINE_boolean("use_fp16", False,
                             "Train using fp16 instead of fp32.")
+
 
 
 #Checkpoint Flags
@@ -57,11 +70,16 @@ tf.app.flags.DEFINE_string("checkpoint_name", "translate.ckpt", "Name of the Ten
 tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300, #change me to 300
                             "How many training steps to do per checkpoint.")
 
+
+
+
 #Dataset Flags
+
+#TODO - this right now is useless until i dynamically load datasets.
 tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
                             "If True, loads training set into memory. Otherwise, reads batches by opening files and reading appropriate lines.")
 
-tf.app.flags.DEFINE_integer("max_train_data_size", 1000000,
+tf.app.flags.DEFINE_integer("max_train_data_size", 100000,
                             "Limit on the size of training data (0: no limit).")
 
 tf.app.flags.DEFINE_integer("train_offset", 0,
@@ -70,52 +88,63 @@ tf.app.flags.DEFINE_integer("train_offset", 0,
 
 
 
+
+
 #==========================Data Preprocessing Flags===================================
-tf.app.flags.DEFINE_integer("max_source_sentence_length", 25,
+tf.app.flags.DEFINE_integer("max_source_sentence_length", 35, #I like long sentences and tough datasets, so I use 50 and 60 here usually
                             "the maximum number of tokens in the source sentence training example in order for the sentence pair to be able to be used in the dataset")
 
-tf.app.flags.DEFINE_integer("max_target_sentence_length", 35,
+tf.app.flags.DEFINE_integer("max_target_sentence_length", 45,
                             "the maximum number of tokens in the target sentence training example in order for the sentence pair to be able to be used in the dataset")
+
 
 
 
 #Embedding Flags for Encoder and Decoder
 #Was 1024, 512
-
-
-tf.app.flags.DEFINE_string("embedding_algorithm", "network",
-                            "glove, fasttext, word2vec, or network. The first three are unsupervised trainers implemented by other programs. the latter is a network layer trained only by backprop")
+#===========================Word Embeddings=====================================
+tf.app.flags.DEFINE_string("embedding_algorithm", "glove",
+                            "glove, or network. The first three are unsupervised trainers implemented by other programs. the latter is a network layer trained only by backprop")
 
 tf.app.flags.DEFINE_boolean("train_embeddings", True,
                             "Whether or not to continue training the glove embeddings from backpropagation or to leave them be")
 
-tf.app.flags.DEFINE_integer("encoder_embedding_size", 512,
+tf.app.flags.DEFINE_integer("encoder_embedding_size", 200,
                             "Number of units in the embedding size of the encoder inputs. This will be used in a wrapper to the first layer")
 #Was 1024, 512
-tf.app.flags.DEFINE_integer("decoder_embedding_size", 512,
+tf.app.flags.DEFINE_integer("decoder_embedding_size", 200,
                             "Number of units in the embedding size of the encoder inputs. This will be used in a wrapper to the first layer")
 
-#set where you want embedding file
-tf.app.flags.DEFINE_string("glove_encoder_embedding_file", "../translator/GloVe/build/rob_vectors_50it.txt",
+tf.app.flags.DEFINE_string("glove_encoder_embedding_file", "../translator/GloVe/build/rob_vectors_50it_200vec_source.txt",
                             "The output file for Glove-trained word embeddings on the dataset.")
-tf.app.flags.DEFINE_string("glove_decoder_embedding_file", "../translator/GloVe/build/rob_vectors_50it_target.txt",
+
+tf.app.flags.DEFINE_string("glove_decoder_embedding_file", "../translator/GloVe/build/rob_vectors_25it_200vec_target.txt",
                             "The output file for Glove-trained word embeddings on the dataset.")
+
+
+
+
+#===========================Parameters==========================================
+tf.app.flags.DEFINE_integer("batch_size", 32, #64 would be good, 128 is better.
+                            "Batch size to use during training.")
+
+tf.app.flags.DEFINE_integer("num_attention_heads", 1,
+                            "The number of heads to use in the attention mechanism")
+
+tf.app.flags.DEFINE_integer("sampled_softmax_size", 512, #64 would be good, 128 is better.
+                            "Sampled Softmax will use this many logits out of the vocab size for the probability estimate of the true word")
+
+tf.app.flags.DEFINE_boolean("decoder_vocab_boosting", True,
+                            "adaboost decoder prediction weights in the loss function based on perplexities of sentences that contain that word")
+
+tf.app.flags.DEFINE_integer("vocab_boost_occurrence_memory", 100,
+                            "When calculating the perpelxity of sentences that contain a certain word, only count that last (this many) sentences with that word")
+
 
 
 #==========================================================================================
 
 
-#TODO - delete this, they conflict with the json architecture support
-tf.app.flags.DEFINE_integer("encoder_hidden_size", 1024,
-                            "Number of units in the hidden size of encoder LSTM layers. Bidirectional layers will therefore output 2*this")
-#Was 1024
-tf.app.flags.DEFINE_integer("decoder_hidden_size", 1024,
-                            "Number of units in the hidden size of decoder LSTM layers. Bidirectional layers will therefore output 2*this")
-
-
-
-
-#TODO - initialize this
 #decoder_state_initializer's mechanism will depend on the implementation. there are a few different ways of doing it
 # essentially, you need to figure out what to do to the decoder state given the last encoder state, either just the top layer of it
 # or all layers of it. there are a few options
@@ -137,10 +166,8 @@ tf.app.flags.DEFINE_integer("decoder_hidden_size", 1024,
 #                concatenated in the event that the top layer of the encoder is bidirectional.
 #                this is passed through a hyperbolic tangent as well. 
 #
-tf.app.flags.DEFINE_string("decoder_state_initializer", "top_layer_mirror",
-                           "The metric used to calculate initial state values for the decoder from the encoder")
-
-
+tf.app.flags.DEFINE_string("decoder_state_initializer", "bahdanu",
+                           "The strategy used to calculate initial state values for the decoder from the encoder")
 
 
 #This is where we store the JSON of the encoder and decoder architecture
@@ -149,28 +176,13 @@ tf.app.flags.DEFINE_string("encoder_decoder_architecture_json", 'encoder_decoder
                             "The file name which stores the JSON architecture of the encoder and decoder")
 
 
-tf.app.flags.DEFINE_boolean("encoder_use_peepholes", False,
-                            "Whether or not to use peephole (diagonal) connections on LSTMs in the encoder")
-tf.app.flags.DEFINE_boolean("decoder_use_peepholes", False,
-                            "Whether or not to use peephole (diagonal) connections on LSTMs in the decoder")
+#Dynamic vs Static Encoder and Decoders.
+#Dynamic will use calls to the dynamic api and pass sequence length
+#Static will use max_time on all network runs, using _PAD symbol, and weighted the padded logits at 0.
+tf.app.flags.DEFINE_string("encoder_rnn_api", "dynamic",
+                            "must be static or dynamic. if static, uses tensorflow static rnn calls and PAD symbols. if dynamic, uses tensorflow dynamic rnn calls and sequence lengths.")
 
-tf.app.flags.DEFINE_float("encoder_init_forget_bias", 0.0,
-                            "The initial forget bias (0-1) to use for LSTMs in the encoder")
-tf.app.flags.DEFINE_float("decoder_init_forget_bias", 0.0,
-                            "The initial forget bias (0-1) to use for LSTMs in the decoder")
-
-
-tf.app.flags.DEFINE_float("encoder_dropout_keep_probability", 1.0,
-                            "The keep probability to use in the dropout wrapper for LSTM's in the encoder. To disable dropout, just use 1.0")
-tf.app.flags.DEFINE_float("decoder_dropout_keep_probability", 1.0,
-                            "The keep probability to use in the dropout wrapper for LSTM's in the decoder. To disable dropout, just use 1.0")
-
-#TODO - Flesh this out
+#TODO - Flesh this out when flags by migrating a few of the tests over from the other code that are common mistakes.
+# Alternatively, do absolutely all that we can right here with the flag testing and try to remove them from the model.
 def flag_test():
     f = tf.app.flags.FLAGS
-    #build flag tests for the rest of the flags for input checking. like this...
-    assert f.encoder_dropout_keep_probability <= 1.0 and f.encoder_dropout_keep_probability >= 0.0, "Encoder dropout keep probability must be between 0 and 1"
-    assert f.decoder_dropout_keep_probability <= 1.0 and f.decoder_dropout_keep_probability >= 0.0, "Decoder dropout keep probability must be between 0 and 1"
-
-    assert os.path.isfile(f.encoder_decoder_architecture_json), "Invalid JSON file location passed for encoder architecture. Could not find %s" % f.encoder_architecture_json
-    #TODO - add decoder as well

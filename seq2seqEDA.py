@@ -1,26 +1,8 @@
-# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
-
-"""Sequence-to-sequence model with an attention mechanism."""
-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
 import random
-
 import time
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
@@ -53,30 +35,40 @@ class seq2seqEDA(object):
                learning_rate,
                learning_rate_decay_factor,
                min_learning_rate,
-               encoder_decoder_json_path, #TODO - add headers for this
+               encoder_decoder_json_path, #TODO - this dude should probably just absorb the attention mechanism model parameters too
                max_encoder_length,
                max_decoder_length,
                use_lstm=True,
-               num_samples=512,
+               softmax_sample_size=512,
                forward_only=False,
                dtype=tf.float32):
-    """Create the model.
+    """Create the model that can be called by the runner
 
     Args:
-      source_vocab_size: size of the source vocabulary.
-      target_vocab_size: size of the target vocabulary.
-      max_gradient_norm: gradients will be clipped to maximally this norm.
-      batch_size: the size of the batches used during training;
-        the model construction is independent of batch_size, so it can be
-        changed after initialization if this is convenient, e.g., for decoding.
+      source_vocab_size: size of the source vocabulary, usually defined by a flag.
+
+      target_vocab_size: size of the target vocabulary, usually defined by a flag.
+
+      max_gradient_norm: the maximum clipped gradient norm
+
+      batch_size: the size of the batches used for training. when decoding, this defaults to one.
+
       learning_rate: learning rate to start with.
+
       learning_rate_decay_factor: decay learning rate by this much when needed.
-      encoder_decoder_json_path
+
+      encoder_decoder_json_path: the file location of the json encoder / decoder architecture
+
       use_lstm: if true, we use LSTM cells instead of GRU cells.
-      num_samples: number of samples for sampled softmax.
+
+      softmax_sample_size: number of samples for sampled softmax.
+
       forward_only: if set, we do not construct the backward pass in the model.
+
       dtype: the data type to use to store internal variables.
+
     """
+
     self.global_step = tf.Variable(0, trainable=False)
     self.dtype = dtype
     self.source_vocab_size = source_vocab_size
@@ -88,7 +80,6 @@ class seq2seqEDA(object):
     self.max_decoder_length = max_decoder_length
     self.encoder_decoder_json_path = encoder_decoder_json_path
 
-    #TODO - add this to saver so it doesn't automatically restore at 0.5
     self.learning_rate = tf.Variable(
         float(learning_rate), trainable=True, dtype=self.dtype)
 
@@ -99,48 +90,48 @@ class seq2seqEDA(object):
     self.encoder_architecture, self.decoder_architecture = model_utils.load_encoder_decoder_architecture_from_json(self.encoder_decoder_json_path, FLAGS.decoder_state_initializer)
 
     # If we use sampled softmax, we need an output projection.
-    #output_projection = None
+    output_projection = None
     softmax_loss_function = None
 
-    # Sampled softmax only makes sense if we sample less than vocabulary size.
-    if num_samples > 0 and num_samples < self.target_vocab_size:
 
-      #TODO - decoder hidden size isn't correct here.
+    # Sampled softmax only makes sense if we sample less than vocabulary size.
+    if softmax_sample_size > 0 and softmax_sample_size < self.target_vocab_size:
+
+      #The top decoder layer cannot be bidirectional, so we don't check for it right now.
+      # If it is allowed later, this will need to have an additional check to double the input parameter to the create_output_projection function
+      last_decoder_layer = next(reversed(self.decoder_architecture["layers"]))
+      output_projection_input_size = self.decoder_architecture["layers"][last_decoder_layer]["hidden_size"]
+
       # This needs to actually be taken from the encoder_decoder_json architecture's top layer
       output_projection = model_utils._create_output_projection(self.target_vocab_size,
-                                                                FLAGS.decoder_hidden_size)
+                                                                output_projection_input_size)
+
       weights = output_projection[0]
       biases = output_projection[1]
       weights_t = output_projection[2]
 
-      #weights_t = tf.get_variable("output_projection_weights", [self.target_vocab_size, FLAGS.decoder_hidden_size], dtype=dtype)
-      #weights = tf.transpose(weights_t)
-      #biases = tf.get_variable("output_projection_biases", [self.target_vocab_size], dtype=dtype)
-      #output_projection = (weights, biases)
 
       def sampled_loss(labels, logits):
         labels = tf.reshape(labels, [-1, 1])
-        # We need to compute the sampled_softmax_loss using 32bit floats to
-        # avoid numerical instabilities.
-        #local_w_t = tf.cast(w_t, tf.float32)
-        #local_b = tf.cast(b, tf.float32)
-        local_inputs = tf.cast(logits, tf.float32)
+
+        # We need to compute the sampled_softmax_loss using 32bit floats to avoid numerical instabilities.
         return tf.cast(
             tf.nn.sampled_softmax_loss(
                 weights=weights_t,
                 biases=biases,
                 labels=labels,
-                inputs=local_inputs,
-                num_sampled=num_samples,
+                inputs=tf.cast(logits, tf.float32),
+                num_sampled=softmax_sample_size,
                 num_classes=self.target_vocab_size),
-            dtype)
+                dtype)
 
       #Assign the previously declared function to be our loss function
       softmax_loss_function = sampled_loss
 
+
     # The seq2seq function: we use embedding for the input and attention.
-    def seq2seq_f(encoder_inputs, decoder_inputs, encoder_input_lengths, decoder_input_lengths, do_decode):
-      return model_utils.run_model(
+    def sequence_to_sequence_function(encoder_inputs, decoder_inputs, encoder_input_lengths, decoder_input_lengths, do_decode):
+      return model_utils.encoder_decoder_attention(
           encoder_inputs,
           decoder_inputs,
           encoder_input_lengths,
@@ -151,24 +142,34 @@ class seq2seqEDA(object):
           num_encoder_symbols=source_vocab_size,
           num_decoder_symbols=target_vocab_size,
           embedding_algorithm=FLAGS.embedding_algorithm,
+          num_heads=FLAGS.num_attention_heads,
           embedding_size=FLAGS.encoder_embedding_size,
-          train_embeddings=FLAGS.train_embeddings or FLAGS.encoder_embedding_size == 'network', #TODO, obviously fix this
+          train_embeddings=FLAGS.train_embeddings or FLAGS.embedding_algorithm == 'network', #TODO, obviously fix this
           output_projection=output_projection,
           feed_previous=do_decode,
           dtype=dtype)
 
+
+
     # Feeds for inputs are lists of integers representing words
-    self.encoder_inputs, self.decoder_inputs, self.encoder_input_lengths, self.decoder_input_lengths, self.target_weights = self.create_encoder_decoder_placeholders()
+    self.encoder_inputs, self.decoder_inputs,\
+     self.encoder_input_lengths,self.decoder_input_lengths, self.target_weights = self.create_encoder_decoder_input_placeholders()
+
+
+    self.vocab_perplexities = tf.placeholder(tf.int32,
+                                            shape=[target_vocab_size, FLAGS.vocab_boost_occurrence_memory],
+                                            name="vocab_perplexities")
+
+    self.target_weight_boosting_op = self.boost_decoder_weights(self.target_weights, self.vocab_perplexities)
 
     #We need to offset the _GO symbol addition by shifting our targets by one index to the right.
     targets = [self.decoder_inputs[i + 1]
                for i in xrange(len(self.decoder_inputs) - 1)]
 
+
     # Training outputs and losses.
-    #TODO - remove one of these if/else calls to model_without_buckets, and add the if for just the output projection
-    #TODO - rename training without buckets
     if forward_only:
-      self.outputs, self.losses = model_utils.model_without_buckets(
+      self.outputs, self.losses = model_utils.run_eda_architecture(
                                                 self.encoder_inputs,
                                                 self.decoder_inputs,
                                                 self.max_encoder_length,
@@ -177,7 +178,7 @@ class seq2seqEDA(object):
                                                 self.decoder_input_lengths,
                                                 targets,
                                                 self.target_weights,
-                                                lambda x, y, x_l, y_l : seq2seq_f(x, y, x_l, y_l, True),
+                                                lambda x, y, x_l, y_l : sequence_to_sequence_function(x, y, x_l, y_l, True),
                                                 softmax_loss_function=softmax_loss_function)
 
       # If we use output projection, we need to project outputs for decoding.
@@ -186,7 +187,7 @@ class seq2seqEDA(object):
 
 
     else:
-      self.outputs, self.losses = model_utils.model_without_buckets(
+      self.outputs, self.losses = model_utils.run_eda_architecture(
                                                 self.encoder_inputs,
                                                 self.decoder_inputs,
                                                 self.max_encoder_length,
@@ -195,7 +196,7 @@ class seq2seqEDA(object):
                                                 self.decoder_input_lengths,
                                                 targets,
                                                 self.target_weights,
-                                                lambda x, y, x_l, y_l : seq2seq_f(x, y, x_l, y_l, False), #we will pass in the arguments ourselves in the model_without_buckets function
+                                                lambda x, y, x_l, y_l : sequence_to_sequence_function(x, y, x_l, y_l, False), #we will pass in the arguments ourselves in the model_without_buckets function
                                                 softmax_loss_function=softmax_loss_function)
 
     # Gradients and SGD update operation for training the model.
@@ -220,7 +221,7 @@ class seq2seqEDA(object):
       self.updates = opt.apply_gradients(
           zip(clipped_gradients, params), global_step=self.global_step)
 
-    #Save everything so we can reload after the power goes out because kitty unplugs the computer looking for his mouse toy.
+    #Save everything so we can reload after the power goes out because kitty unplugs the computer looking for his stupid mouse toy.
     self.saver = tf.train.Saver(tf.global_variables())
 
   def step(self,
@@ -338,7 +339,7 @@ class seq2seqEDA(object):
 
 
   #Create placeholder variables for the encoder/decoder inputs
-  def create_encoder_decoder_placeholders(self):
+  def create_encoder_decoder_input_placeholders(self):
 
     # Feeds for inputs.
     encoder_inputs = []
@@ -364,6 +365,12 @@ class seq2seqEDA(object):
     decoder_input_lengths = tf.placeholder(tf.int32, shape=[None], name="decoderInputLengths")
 
     return encoder_inputs, decoder_inputs, encoder_input_lengths, decoder_input_lengths, target_weights
+
+  #TODO - write this, and write this within the attention decoder at teach step
+  def boost_decoder_weights(self, weights, perplexity_matrix):
+    weights = weights
+    perplexity_matrix=perplexity_matrix
+    #Yeah, this function does nothing
 
 
 
@@ -410,23 +417,21 @@ class seq2seqEDA(object):
       encoder_input_lengths.append(len(encoder_input))
       decoder_input_lengths.append(len(decoder_input) + 1) #TODO - run some tests on this +1 and make sure we aren't off by one here because of _EOS
 
-      #print("Encoder inputs initial reverse: %s" % str(list(reversed(encoder_input+encoder_pad))))
-      #print("Encoder inputs reversed other way: %s" % str(list(reversed(encoder_pad+encoder_input))))
-
-      #print("Decoder inputs are %s" % str([vocabulary_utils.GO_ID] + decoder_input +
-      #                      [vocabulary_utils.PAD_ID] * decoder_pad_size))
-      #print("Decoder lengths are %s" % str(decoder_input_lengths))
-
     return encoder_inputs, decoder_inputs, encoder_input_lengths, decoder_input_lengths
 
-  #TODO - once dynamic rnn's are officially running well, use this
-  #     BIG BIG TO DO
-  # Until then, KEEP IT, and we can run tests on static RNN's with padded weights == 0 returning the same gradients as dynamic rnn's without padding
 
-  def weight_target_symbols(self, decoder_inputs, decoder_size, length_idx):
+  def boosted_weight_target_symbols(self, decoder_inputs, decoder_size):
+    pass
+
+
+  def default_weight_target_symbols(self, decoder_inputs, decoder_size):
+
+    #decoder size - the max sentence decoder length
+    #decoder inputs - the batch size length array inputs for the decoder at that time step
+
     """As it stands now in this implementation, we don't really care about learning the padding term
     at all, so we zero it out in the loss function calculation. We also zero out the final symbol of
-    the decoder as well, namely the end of the sentence. Every other target gets an equal weight of
+    the decoder as well, since it gets a + Every other target gets an equal weight of
     1.0. These weights will be multiplied by their corresponding decoder indexes in the loss function
     when the overall softmax cross-entropy is calculated. In time, it might be worthwhile to dynamically
     adjust the target weights if we find that we are misclassifying certain labels. One way to do this would
@@ -441,14 +446,17 @@ class seq2seqEDA(object):
     For now, we simply treat PAD_ID as a weight of 0, and we treat the final length index as 0. all other
     words get an importance of 1."""
 
-    batch_weight = np.ones(len(decoder_inputs), dtype=np.float32) #TODO - something about dtype here
+    default_weights = []
 
-    for batch_idx in xrange(len(decoder_inputs)):
-      if length_idx < decoder_size - 1:
-        target = decoder_inputs[batch_idx][length_idx + 1]
-      if length_idx == decoder_size - 1 or target == vocabulary_utils.PAD_ID:
-        batch_weight[batch_idx] = 0.0
-    return batch_weight
+    for length_idx in xrange(decoder_size):
+      batch_weight = np.ones( shape=len(decoder_inputs), dtype=np.float32)
+      for batch_idx in xrange(len(decoder_inputs)):
+        if length_idx < decoder_size - 1:
+          target = decoder_inputs[batch_idx][length_idx + 1]
+        if length_idx == decoder_size - 1 or target == vocabulary_utils.PAD_ID:
+          batch_weight[batch_idx] = 0.0
+      default_weights.append(batch_weight)
+    return default_weights
 
 
   def get_batch_from_memory(self, data, use_all_rows=False):
@@ -479,17 +487,10 @@ class seq2seqEDA(object):
     batch_decoder_inputs = []
     batch_weights = []
 
-    #for d in decoder_inputs:
-    #  print(len(d))
-    #print(decoder_input_lengths)
-
-    #print("shape of encoderinputasarray %s" % str(encoder_input_as_array.shape))
-    #print("shape of decoderinputasarray %s" % str(decoder_input_as_array.shape))
-
     #fetch a coefficient that corresponds to how much we care about getting each decoder input correct
     #for now, it turns out we naively care about all targets the same, except _PAD, which we totally dont care about
-    #TODO - remove this unnecessary list comprehension that iterates through its own fucking argument
-    batch_weights_old = [self.weight_target_symbols(decoder_inputs, decoder_size, l_idx) for l_idx in xrange(decoder_size)]
+    #this function takes care of the transpose for us as well.
+    batch_weights_old = self.default_weight_target_symbols(decoder_inputs, decoder_size)
 
     #our inputs need to be reshaped so that we feed in the symbol at time step t for each example in the batch
     #encoder inputs are a list, so make an array out of the list and take the tranpose of the matrix to do this.
@@ -503,33 +504,8 @@ class seq2seqEDA(object):
     batch_encoder_inputs = [np.squeeze(i, axis=0) for i in np.split(encoder_input_as_array, encoder_size, axis=0)]
     batch_decoder_inputs = [np.squeeze(i, axis=0) for i in np.split(decoder_input_as_array, decoder_size, axis=0)]
 
-    #make sure they all match
-    #for idx in xrange(encoder_size):
-    #  assert(np.array_equal(batch_encoder_inputs[idx], batch_encoder_inputs2[idx])), "implementations encoder dont match"
-    #  assert(np.array_equal(batch_decoder_inputs[idx], batch_decoder_inputs2[idx])), "implementations decoder dont match"
-    #  assert(np.array_equal(batch_weights[idx], batch_weights2[idx])), "implementations weights dont match"
-
-    #assert len(batch_encoder_inputs) == len(batch_encoder_inputs2), "encoder lengths dont match"
-    #assert len(batch_decoder_inputs) == len(batch_decoder_inputs2), "decoder lengths dont match"
-    #assert len(batch_weights) == len(batch_weights2), "encoder lengths dont match"
-
     #decoder_input_copy = np.copy(decoder_inputs)
     #decoder_input_copy = np.transpose(decoder_input_copy, perm=[1,0,2])
-
-    #raise ValueError("Intentionally stopping. Everything works!")
-
-    #print(batch_encoder_inputs[0].shape)
-    #print(len(batch_encoder_inputs))
-    #print(batch_decoder_inputs[0].shape)
-    #print(len(batch_decoder_inputs))
-
-    #sanity checker
-    #for idx,inp in enumerate(batch_decoder_inputs[5]):
-    #  print("Examining idx %d of batch decoder input 5. it is %d" % (idx, inp))
-    #  if inp == vocabulary_utils.PAD_ID:
-    #    assert batch_weights_old[5][idx] == 0, "this wasnt a zero. it was a %d" % batch_weights_old[5][idx]
-    #  else:
-    #    assert batch_weights_old[5][idx] == 1, "this wasnt a one. it was a %d" % batch_weights_old[5][idx]
 
     return batch_encoder_inputs, batch_decoder_inputs, encoder_input_lengths, decoder_input_lengths, batch_weights_old
 

@@ -76,6 +76,7 @@ from collections import OrderedDict
 
 FLAGS = tf.app.flags.FLAGS
 
+
 def _create_output_projection(target_size,
                               output_size):
   #NOTE, shape[1] of the output projection weights should be equal to the output size of the final decoder layer
@@ -90,6 +91,8 @@ def _create_output_projection(target_size,
   weights = tf.transpose(weights_t)
   biases = tf.get_variable("output_projection_biases", [target_size], dtype=tf.float32)
   return (weights, biases, weights_t)
+
+
 
 def _verify_recurrent_stack_architecture(stack_json, top_bidirectional_layer_allowed=False):
   permitted_input_merge_modes = [False,'concat','sum'] #when multiple layers connect to an LSTM/GRU, what do we do with these inputs? concat or sum, for now
@@ -233,30 +236,64 @@ def load_encoder_decoder_architecture_from_json(json_file_path, decoder_state_in
       raise Exception, "Invalid architecture. Now dying"
 
 
-#Probably delete this
-def run_json_stack_architecture(model_json):
-  pass
+
+def _get_residual_layer_inputs_as_list(current_layer_name, current_layer_input_list, all_previous_layer_outputs):
+  #Examines a current layer list's input layers, and looks at all the previous layer outputs and puts them in a list
+  # if they are outputs from any of those listed layers
+  #Args:
+  # current_layer_name - string, the name of the current layer for which we are building a list
+  # current_layer_input_list - list of strings, with each string being one of the possible previous layer names. this represents the names of layers that connect to this layer
+  # all_previous_layer_outputs - list of lists of tensors, with each of these inner lists containing output tensors. this inner list will have a length of one or two most likely (unidirectional or bidirectional)
+  #Returns:
+  # list of previous layer outputs to use as inputs to this layer. can be an empty list (as well it always will be for the first layer)
+  input_list = []
+
+  #add to inputs the residual connections that connect to this layer
+  for candidate_layer_name, candidate_layer_output in all_previous_layer_outputs.iteritems():
+    #print("layer %s is checking layer %s for inputs" %  (layer_name, candidate_layer_name))
+    if candidate_layer_name == current_layer_name: #layers don't have residual connections to themselves...
+      #print("skipping")
+      continue
+    elif candidate_layer_name in current_layer_input_list: #we will gather the layers that are marked in the architecture
+      #print("layer %s will use input from layer %s" % (layer_name, candidate_layer_name))
+      for layer_output in candidate_layer_output: #candidate_layer_output is always a list, sometimes with 1 element, sometimes with 2
+        input_list.append(layer_output)
+
+  return input_list
 
 
-#TODO - eventually embeddings will be initialized with pre-trained FastText (on the dataset? full pretrained?)...seems like high overfitting potential, and sort of cheating...so make it a flag option.
-def run_model(encoder_inputs,
-              decoder_inputs,
-              encoder_input_lengths,
-              decoder_input_lengths,
-              encoder_architecture,
-              decoder_architecture,
-              decoder_state_initializer,
-              num_encoder_symbols,
-              num_decoder_symbols,
-              embedding_size,
-              embedding_algorithm="network",
-              train_embeddings=True,
-              num_heads=1,
-              output_projection=None,
-              feed_previous=False,
-              dtype=None,
-              scope=None,
-              initial_state_attention=False):
+
+def _combine_residual_inputs(inputs_as_list, merge_mode, return_list=True):
+  if merge_mode == 'concat':
+    inputs=tf.concat(inputs_as_list, axis=2) #creates tensor of shape (max_time, batch_size, input_size)
+  elif merge_mode == 'sum':
+    inputs = tf.add_n(inputs_as_list)
+  else:
+    raise ValueError("Input merge mode must be either concat or sum")
+
+  #unstacking the inputs will create a list of tensors with length max_time, where each tensor has shape (batch_size, input_size)
+  return tf.unstack(inputs) if return_list else inputs
+
+
+
+def encoder_decoder_attention(encoder_inputs,
+                                decoder_inputs,
+                                encoder_input_lengths,
+                                decoder_input_lengths,
+                                encoder_architecture,
+                                decoder_architecture,
+                                decoder_state_initializer,
+                                num_encoder_symbols,
+                                num_decoder_symbols,
+                                embedding_size,
+                                embedding_algorithm="network", #network means random initialization, train via backprop. otherwise use fastext, word2vec or glove
+                                train_embeddings=True, #if true and not network for embedding algorithm, will use unsupervised algorithm for initialization and train via backprop, which dominates anyway
+                                num_heads=1, #attention heads to read. 
+                                output_projection=None,
+                                feed_previous=False,
+                                dtype=None,
+                                scope=None,
+                                initial_state_attention=False):
 
   #The first thing the model does is add an embedding to the encoder_inputs
   with variable_scope.variable_scope(scope or "model", dtype=dtype) as scope:
@@ -264,37 +301,37 @@ def run_model(encoder_inputs,
 
     #TODO - this is where the embedded decoder inputs should be extracted
     # why? because they might be pre-trained glove/word2vec/fasttext embeddings that aren't trained by the network
-    #    BUT
-    #      then they are still in memory for each bucket. can probably do better and abstract it into the argument
-    #      to run_model()
 
-
-    #encoder outputs are a list of length batch_size
-    #final_top_encoder_outputs, final_encoder_states = encoder.dynamic_embedding_encoder(encoder_architecture,
-    #                                                                                encoder_inputs,
-    #                                                                                encoder_input_lengths,
-    #                                                                                num_encoder_symbols,
-    #                                                                                embedding_size,
-    #                                                                                embedding_algorithm=embedding_algorithm,
-    #                                                                                train_embeddings=train_embeddings,
-    #                                                                                dtype=dtype)
-
-
-    final_top_encoder_outputs, final_encoder_states = encoder.static_embedding_encoder(encoder_architecture,
-                                                                                        encoder_inputs,
-                                                                                        encoder_input_lengths,
-                                                                                        num_encoder_symbols,
-                                                                                        embedding_size,
-                                                                                        embedding_algorithm=embedding_algorithm,
-                                                                                        train_embeddings=train_embeddings,
-                                                                                        dtype=dtype)
+    #encoder outputs are a list of length max_encoder_output of tensors with the shape of the top layer
+    if FLAGS.encoder_rnn_api == "dynamic":
+      final_top_encoder_outputs, final_encoder_states = encoder.dynamic_embedding_encoder(encoder_architecture,
+                                                                                      encoder_inputs,
+                                                                                      encoder_input_lengths,
+                                                                                      num_encoder_symbols,
+                                                                                      embedding_size,
+                                                                                      embedding_algorithm=embedding_algorithm,
+                                                                                      train_embeddings=train_embeddings,
+                                                                                      dtype=dtype)
+    elif FLAGS.encoder_rnn_api == "static":
+      final_top_encoder_outputs, final_encoder_states = encoder.static_embedding_encoder(encoder_architecture,
+                                                                                          encoder_inputs,
+                                                                                          encoder_input_lengths,
+                                                                                          num_encoder_symbols,
+                                                                                          embedding_size,
+                                                                                          embedding_algorithm=embedding_algorithm,
+                                                                                          train_embeddings=train_embeddings,
+                                                                                          dtype=dtype)
+    else:
+      raise ValueError, "encoder rnn api must be dynamic or static. eventually move this to flags check function"
 
     #Then we create an attention state by reshaping the encoder outputs. This amounts to creating an additional
-    #dimension, namely attention_length, so that our attention states are of shape [batch_size, atten_len=1, atten_size=size of last lstm output]
+    #dimension, namely attention_length, so that our attention states are of shape [batch_size, atten_len=1, attention_size=size of last lstm output]
     #these attention states are used in every calculation of attention during the decoding process
     #we will use the STATE output from the decoder network as a query into the attention mechanism.
-    attention_states = encoder.get_attention_state_from_encoder_outputs(final_top_encoder_outputs,
-                                                                dtype=dtype)
+    attention_states = encoder.reshape_encoder_outputs_for_attention(final_top_encoder_outputs,
+                                                                    dtype=dtype)
+
+    print(attention_states.get_shape())
 
     #then we run the decoder.
     return attention_decoder.embedding_attention_decoder(
@@ -306,6 +343,8 @@ def run_model(encoder_inputs,
           attention_states,
           num_decoder_symbols,
           embedding_size,
+          embedding_algorithm=embedding_algorithm,
+          train_embeddings=train_embeddings,
           num_heads=num_heads,
           output_size=None,
           output_projection=output_projection,
@@ -349,13 +388,14 @@ def sequence_loss_by_example(logits,
     log_perp_list = []
     for logit, target, weight in zip(logits, targets, weights):
       if softmax_loss_function is None:
+
         # TODO(irving,ebrevdo): This reshape is needed because
         # sequence_loss_by_example is called with scalars sometimes, which
         # violates our general scalar strictness policy.
-
         print("WARNING - NO DEFINED SOFTMAX LOSS FUNCTION")
 
         target = array_ops.reshape(target, [-1])
+
         crossent = nn_ops.sparse_softmax_cross_entropy_with_logits(
             labels=target, logits=logit)
       else:
@@ -363,7 +403,7 @@ def sequence_loss_by_example(logits,
 
 
 
-      #INSERT BOOSTING
+      #TODO - INSERT BOOSTING on average sentence score per logit per some number of iterations
 
 
       #Sanity Check
@@ -429,7 +469,7 @@ def sequence_loss(logits,
 
 
 
-def model_without_buckets(encoder_inputs,
+def run_eda_architecture(encoder_inputs,
                        decoder_inputs,
                        max_encoder_length,
                        max_decoder_length,
@@ -441,11 +481,7 @@ def model_without_buckets(encoder_inputs,
                        softmax_loss_function=None,
                        per_example_loss=False,
                        name=None):
-  """Create a sequence-to-sequence model with support for bucketing.
-
-  The seq2seq argument is a function that defines a sequence-to-sequence model,
-  e.g., seq2seq = lambda x, y: basic_rnn_seq2seq(
-      x, y, tf.nn.rnn_cell.GRUCell(24))
+  """Create a sequence-to-sequence model
 
   Args:
     encoder_inputs: A list of Tensors to feed the encoder; first seq2seq input.
@@ -475,6 +511,7 @@ def model_without_buckets(encoder_inputs,
         if per_example_loss is set, a list of 1D batch-sized float Tensors.
   """
   all_inputs = encoder_inputs + decoder_inputs + targets + weights
+
   with ops.name_scope(name, "model_without_buckets", all_inputs):
     #with variable_scope.variable_scope(
     #    variable_scope.get_variable_scope(), reuse=True if j > 0 else None):
@@ -487,6 +524,7 @@ def model_without_buckets(encoder_inputs,
                            decoder_inputs[:max_decoder_length], #TODO check not off by one here
                            encoder_input_lengths,
                            decoder_input_lengths)
+
       if per_example_loss:
         losses = sequence_loss_by_example(
                   outputs,
@@ -494,6 +532,7 @@ def model_without_buckets(encoder_inputs,
                   weights[:max_decoder_length],
                   softmax_loss_function=softmax_loss_function)
       else:
+
         losses = sequence_loss(
                 outputs,
                 targets[:max_decoder_length],
