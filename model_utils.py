@@ -23,14 +23,12 @@ FLAGS = tf.app.flags.FLAGS
 
 def _create_output_projection(target_size,
                               output_size):
-  #NOTE, shape[1] of the output projection weights should be equal to the output size of the final decoder layer
-  #If, for some reason, I make the final output layer bidirectional or something else strange, this would be the
-  #wrong size for the output
-
   #Notice we don't put this in a scope. It lives in the sequence model itself and gets passed between layers of the
-  #decoder. We return a transpose variable itself to speed up training so we don't have to do this back and
-  #forth between iterations. the weights transpose is necessary to pass to softmax. the weights themselves are used
-  #to speak to the attention decoder.
+  #decoder. This is a pattern used without this file as these functions that begin with '_' are primarily helper functions.
+
+  #We return a transpose variable itself to speed up training so we don't have to do this back and
+  #forth between iterations. The weights transpose is necessary to pass to softmax. The weights themselves are used
+  #in the attention decoder itself.
   weights_t = tf.get_variable("output_projection_weights", [target_size, output_size], dtype=tf.float32)
   weights = tf.transpose(weights_t)
   biases = tf.get_variable("output_projection_biases", [target_size], dtype=tf.float32)
@@ -51,7 +49,8 @@ def _verify_recurrent_stack_architecture(stack_json, top_bidirectional_layer_all
   #   'encoder0' : [512,512],
   #   'encoder1' : [512,512],
   #   'encoder2' : [1024],
-  #   'encoder3' : [1024]
+  #   'encoder3' : [1024],
+  #   'encoder_names_arent_in_a_specific_pattern_because_they_are_an_ordered_dict' : [1024]
   # }
   
   #go one-by-one and make sure the architecture layer sizes add up
@@ -122,7 +121,7 @@ def _verify_recurrent_stack_architecture(stack_json, top_bidirectional_layer_all
   #this is because this needs to be fed to the output projection.
   assert len(output_sizes.keys()) == cur_layer_index, "Expected an output size key for each layer processed. Have %d keys but final layer index reads %d" % (len(output_sizes.keys()), cur_layer_index) #sanity check, +1 because cur_layer_index start at 0
   if not top_bidirectional_layer_allowed and stack_json["layers"][last_layer]["bidirectional"] == True:
-    print("The top layer cannot be bidirectional. This is the default in the decoder until more support is added for dealing with the final output when the merge modes are not defined")
+    print("The top layer cannot be bidirectional as per the default settings passed in verify_encoder_decoder_stack_architecture")
     return False
   return True
 
@@ -131,8 +130,6 @@ def _verify_decoder_state_initializer(stack_json, decoder_state_initializer):
 
 def verify_encoder_decoder_stack_architecture(stack_json, decoder_state_initializer):
 
-  #TODO - the top bidirectional layer allowed argument can probably go away. but test it better before
-  # removing it here and in the actual method.
   print("Testing Encoder model architecture...")
   if _verify_recurrent_stack_architecture(stack_json['encoder'], top_bidirectional_layer_allowed=True):
     print("Valid")
