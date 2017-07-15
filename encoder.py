@@ -8,6 +8,7 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import variable_scope
+from tensorflow.python.util import nest
 from collections import OrderedDict
 FLAGS = tf.app.flags.FLAGS
 
@@ -34,9 +35,6 @@ def _create_encoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_k
 
 def _create_encoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
   raise NotImplementedError
-
-
-
 
 # Concatenation of encoder outputs to put attention on.
 # have any reason to use a different variable.
@@ -208,12 +206,23 @@ def static_embedding_encoder(encoder_json,
         if layer_parameters['bidirectional']:
           cf = _create_encoder_cell(layer_parameters)
           cb = _create_encoder_cell(layer_parameters)
-          out_fb, out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf, cb, inputs, dtype=dtype)
+          out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf, cb, inputs, dtype=dtype)
 
           #store the outputs according to how they have to be merged.
           #they will be a list with 2 elements, the forward and backward outputs. or, a list with one element, the concatenation or sum of the 2 elements.
           
           if layer_parameters['output_merge_mode'] == 'concat':
+            # Concat each of the forward/backward outputs
+            flat_out_f = nest.flatten(out_f)
+            flat_out_b = nest.flatten(out_b)
+
+            flat_outputs = tuple(
+                array_ops.concat([fw, bw], 1)
+                for fw, bw in zip(flat_out_f, flat_out_b))
+
+            out_fb = nest.pack_sequence_as(structure=out_f,
+                                          flat_sequence=flat_outputs)
+
             cell_outputs[layer_name] = [out_fb]
           elif layer_parameters['output_merge_mode'] == 'sum':
             cell_outputs[layer_name] = [tf.unstack(tf.add_n([out_f, out_b]))] #unstack recreates a list of length bucket_length of tensors with shape (batch_size, hidden_size)

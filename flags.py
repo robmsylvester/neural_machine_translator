@@ -137,7 +137,7 @@ tf.app.flags.DEFINE_integer("num_attention_heads", 1,
 tf.app.flags.DEFINE_integer("sampled_softmax_size", 512, #64 would be good, 128 is better.
                             "Sampled Softmax will use this many logits out of the vocab size for the probability estimate of the true word")
 
-#TODO - decoder vocab boosting is currently not implemented
+#TODO - decoder vocab boosting is currently not implemented.
 tf.app.flags.DEFINE_boolean("decoder_vocab_boosting", False,
                             "adaboost decoder prediction weights in the loss function based on perplexities of sentences that contain that word")
 
@@ -183,10 +183,12 @@ tf.app.flags.DEFINE_string("encoder_decoder_architecture_json", 'encoder_decoder
 #Dynamic vs Static Encoder and Decoders.
 #Dynamic will use calls to the dynamic api and pass sequence length
 #Static will use max_time on all network runs, using _PAD symbol, and weighted the padded logits at 0.
-tf.app.flags.DEFINE_string("encoder_rnn_api", "dynamic",
+#The Decoder intercepts outputs at every time step and passes to attention and other stuff, so we just intercept them anyway (meaning it's always static with time=1)
+tf.app.flags.DEFINE_string("encoder_rnn_api", "static",
                             "must be static or dynamic. if static, uses tensorflow static rnn calls and PAD symbols. if dynamic, uses tensorflow dynamic rnn calls and sequence lengths.")
 
 #TODO - Flesh this out when flags by migrating a few of the tests over from the other code that are common mistakes.
 # Alternatively, do absolutely all that we can right here with the flag testing and try to remove them from the model.
 def flag_test():
     f = tf.app.flags.FLAGS
+    

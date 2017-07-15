@@ -319,19 +319,30 @@ def one_step_decoder(decoder_json, attn_input, input_lengths, hidden_states_stac
           assert len(hidden_states_stack[current_layer]) == 2, "Expected current layer to have two initial hidden states, but instead have %d" % len(hidden_states_stack)
           cf = _create_decoder_cell(layer_parameters)
           cb = _create_decoder_cell(layer_parameters)
-          out_fb, out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf,
-                                                                                    cb,
-                                                                                    inputs, #ONE TIME STEP
-                                                                                    initial_state_forward=hidden_states_stack[current_layer][0],
-                                                                                    initial_state_backward=hidden_states_stack[current_layer][1],
-                                                                                    dtype=dtype)
+          out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf,
+                                                                              cb,
+                                                                              inputs, #ONE TIME STEP
+                                                                              initial_state_forward=hidden_states_stack[current_layer][0],
+                                                                              initial_state_backward=hidden_states_stack[current_layer][1],
+                                                                              dtype=dtype)
           #store the outputs according to how they have to be merged.
           #they will be a list with 2 elements, the forward and backward outputs. or, a list with one element, the concatenation or sum of the 2 elements.
           
-          #TODO - remove these checks form every encoder pass
           if layer_parameters['output_merge_mode'] == 'concat':
+
+            # Concat each of the forward/backward outputs
+            flat_out_f = nest.flatten(out_f)
+            flat_out_b = nest.flatten(out_b)
+
+            flat_outputs = tuple(
+                array_ops.concat([fw, bw], 1)
+                for fw, bw in zip(flat_out_f, flat_out_b))
+
+            out_fb = nest.pack_sequence_as(structure=out_f,
+                                          flat_sequence=flat_outputs)
             #assert out_f[0].get_shape().ndims == 2
             cell_outputs[layer_name] = [out_fb]
+
           elif layer_parameters['output_merge_mode'] == 'sum':
             #assert out_f[0].get_shape().ndims == 2
             cell_outputs[layer_name] = [tf.unstack(tf.add_n([out_f, out_b]))] #unstack recreates a list of length bucket_length of tensors with shape (batch_size, hidden_size)

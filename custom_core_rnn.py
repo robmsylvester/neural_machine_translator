@@ -1,3 +1,8 @@
+#In this file, I've just modified the return arguments of the
+# static unidirectional and bidirectional rnn's so that I have
+# direct access to the fw and bw args. removing the nest_pack call
+# and only adding it when necessary should speed things up a tad
+
 # Copyright 2015 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -343,15 +348,5 @@ def static_bidirectional_rnn(cell_fw, cell_bw, inputs,
           dtype, sequence_length, scope=bw_scope)
 
   output_bw = _reverse_seq(tmp, sequence_length)
-  # Concat each of the forward/backward outputs
-  flat_output_fw = nest.flatten(output_fw)
-  flat_output_bw = nest.flatten(output_bw)
 
-  flat_outputs = tuple(
-      array_ops.concat([fw, bw], 1)
-      for fw, bw in zip(flat_output_fw, flat_output_bw))
-
-  outputs = nest.pack_sequence_as(structure=output_fw,
-                                  flat_sequence=flat_outputs)
-
-  return (outputs, output_fw, output_bw, output_state_fw, output_state_bw)
+  return (output_fw, output_bw, output_state_fw, output_state_bw)
