@@ -58,7 +58,7 @@ def create_model(session, forward_only):
                    If training, need backprop. Amounts to a control op on whether or not to run those gradient
                    updates in the session
   """
-  dtype = tf.float16 if FLAGS.use_fp16 else tf.float32 #TODO - deprecated support for tf.float16, kill it.
+  dtype = tf.float32
 
   model = seq2seqEDA.seq2seqEDA(
       FLAGS.from_vocab_size,

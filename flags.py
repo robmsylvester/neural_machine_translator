@@ -57,13 +57,6 @@ tf.app.flags.DEFINE_string("from_dev_data", None, "Validation data.")
 tf.app.flags.DEFINE_string("to_dev_data", None, "Validation data.")
 
 
-
-
-tf.app.flags.DEFINE_boolean("use_fp16", False,
-                            "Train using fp16 instead of fp32.")
-
-
-
 #Checkpoint Flags
 tf.app.flags.DEFINE_string("checkpoint_name", "translate.ckpt", "Name of the Tensorflow checkpoint file")
 
@@ -191,4 +184,3 @@ tf.app.flags.DEFINE_string("encoder_rnn_api", "static",
 # Alternatively, do absolutely all that we can right here with the flag testing and try to remove them from the model.
 def flag_test():
     f = tf.app.flags.FLAGS
-    
