@@ -1,0 +1,86 @@
+ /*
+ {
+ 	"encoder" : {
+ 		"use_lstm": boolean - Will this encoder use LSTM's (True) or GRU's (False)
+		"num_layers" - positive integer, must equal to number of keys in "layers"
+		"layers" : {
+			"encoder0": {                      	#encoder layer key names can be anything because this will be an ORDERED python dict
+				"peepholes" : false,           	#boolean - true if you want lstm's to use peephole connections. must be false is use_lstm is false
+				"bidirectional" : true,        	#boolean - true to have a fw and bw lstm/gru, false to have just a fw output tensor
+				"expected_input_size" : -1,    	#integer - must be -1 for the first layer, otherwise specifies size of final dimension of input tensor after it has been merged. This is your sanity check. It controls no execution, only exists to test. If inputs are a static list of tensors of length max_time, still this is the final dimension of one of the input tensors.
+				"hidden_size" : 1024,          	#positive integer - output size of the tensor. if bidirectional, there will be two outputs of size hidden_size, unless they are merged in the output_merge_mode
+				"dropout_keep_prob" : 1.0,     	#float between 0-1 - Wrap a dropout layer around the hidden_size of the cell. Keep probability of 1.0 means use all parameters every time. 0.7 means drop 30% of them every time
+				"init_forget_bias" : 0.0,      	#float - Generally 0 or a low number. If use_lstm is false, meaning a GRU is used, this parameter isn't used because the gru starts with a bias of 1.0 to not reset and not update.
+				"input_layers" : [],           	#list of strings that say which outputs from previous layers connect to this. Only previously declared layer keys can be in this list.
+				"output_merge_mode" : "concat", #either "concat", "sum" or false. if the tensor has two outputs, they can be concatenated or element-wise summed. or leave them as they are (false). Note that if you have only one output (unidirectional), then this parameter is meaningless.
+				"input_merge_mode" : false      #either "concat", "sum" or false. must be false for the first layer, "concat" or "sum" for all otehrs. inputs from all other layer outputs need to be compatible dimensions if using an element-wise sum. Otherwise, concatenate them
+			},
+			"encoder1": {
+				"peepholes" : false,
+				"bidirectional" : true,
+				"expected_input_size" : 2048,   #Notice how the previous layer had 2 x 1024 outputs, concatenated.
+				"hidden_size" : 1024,
+				"dropout_keep_prob" : 1.0,
+				"init_forget_bias" : 0.0,
+				"input_layers" : ["encoder0"],
+				"output_merge_mode" : false,
+				"input_merge_mode" : "concat"   #Notice how we specified to concat already in encoder0's output_merge_mode. You must still declare concat or sum.
+			},
+			"encoder2": {
+				"peepholes" : false,
+				"bidirectional" : false,
+				"expected_input_size" : 1024,
+				"hidden_size" : 1024,
+				"dropout_keep_prob" : 1.0,
+				"init_forget_bias" : 0.0,
+				"input_layers" : ["encoder1"],
+				"output_merge_mode" : false,
+				"input_merge_mode" : "sum"
+			}
+		}
+	},
+	"decoder" : {
+		"use_lstm": true,                        #Notice we have a different use_lstm property here. Theoretically the encoder could be LSTM's and decoder as GRU's
+		"num_layers": 3,
+		"layers": {
+			"decoder0": {
+				"lstm": true,
+				"peepholes" : false,
+				"bidirectional" : false,
+				"expected_input_size" : -1,
+				"hidden_size" : 1024,
+				"dropout_keep_prob" : 1.0,
+				"init_forget_bias" : 0.0,
+				"input_layers" : [],
+				"output_merge_mode" : false,
+				"input_merge_mode" : false
+			},
+			"decoder1": {
+				"lstm": true,
+				"peepholes" : false,
+				"bidirectional" : false,
+				"expected_input_size" : 1024,
+				"hidden_size" : 1024,
+				"dropout_keep_prob" : 1.0,
+				"init_forget_bias" : 0.0,
+				"input_layers" : ["decoder0"],
+				"output_merge_mode" : false,
+				"input_merge_mode" : "concat"
+			},
+			"decoder2": {
+				"lstm": true,
+				"peepholes" : false,
+				"bidirectional" : false,
+				"expected_input_size" : 1024,
+				"hidden_size" : 1024,
+				"dropout_keep_prob" : 1.0,
+				"init_forget_bias" : 0.0,
+				"input_layers" : ["decoder0", "decoder1"],
+				"output_merge_mode" : false,
+				"input_merge_mode" : "sum"
+			}
+		}
+	}
+}
+
+*/

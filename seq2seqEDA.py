@@ -38,7 +38,6 @@ class seq2seqEDA(object):
                encoder_decoder_json_path, #TODO - this dude should probably just absorb the attention mechanism model parameters too
                max_encoder_length,
                max_decoder_length,
-               use_lstm=True,
                softmax_sample_size=512,
                forward_only=False,
                dtype=tf.float32):
@@ -59,8 +58,6 @@ class seq2seqEDA(object):
 
       encoder_decoder_json_path: the file location of the json encoder / decoder architecture
 
-      use_lstm: if true, we use LSTM cells instead of GRU cells.
-
       softmax_sample_size: number of samples for sampled softmax.
 
       forward_only: if set, we do not construct the backward pass in the model.
@@ -68,7 +65,6 @@ class seq2seqEDA(object):
       dtype: the data type to use to store internal variables.
 
     """
-
     self.global_step = tf.Variable(0, trainable=False)
     self.dtype = dtype
     self.source_vocab_size = source_vocab_size

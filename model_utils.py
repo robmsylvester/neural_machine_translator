@@ -12,13 +12,45 @@ from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import variable_scope
 
-#from tensorflow.contrib.rnn.python.ops import core_rnn
+from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl
 import encoder
 import attention_decoder
 import json
 from collections import OrderedDict
 
 FLAGS = tf.app.flags.FLAGS
+
+#TODO - redefine the GRU with my own implementation that adds support for default reset/update gates, activation function, initialization other than xavier
+#TODO - add the initialization and activation parameters to the .json architecture
+def _create_rnn_cell(json_layer_parameters, use_lstm=True):
+
+  def _create_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_keep_prob):
+    c = core_rnn_cell_impl.LSTMCell(hidden_size, #number of units in the LSTM
+                  use_peepholes=use_peepholes,
+                  initializer=tf.contrib.layers.xavier_initializer(), #TODO - make this a json property.
+                  state_is_tuple=True,
+                  forget_bias=init_forget_bias)
+    if dropout_keep_prob < 1.0:
+      c = core_rnn_cell_impl.DropoutWrapper(c, output_keep_prob=dropout_keep_prob)
+    return c
+
+  #default hyperbolic tangent activation
+  def _create_gru(hidden_size, dropout_keep_prob):
+    g = core_rnn_cell_impl.GRUCell(hidden_size)
+    if dropout_keep_prob < 1.0:
+      g = core_rnn_cell_impl.DropoutWrapper(g, output_keep_prob=dropout_keep_prob)
+    return g
+
+  if use_lstm:
+    return _create_lstm(json_layer_parameters['hidden_size'],
+                        json_layer_parameters['peepholes'],
+                        json_layer_parameters['init_forget_bias'],
+                        json_layer_parameters['dropout_keep_prob'])
+  else:
+    return _create_gru(json_layer_parameters['hidden_size'],
+                        json_layer_parameters['dropout_keep_prob'])
+
+
 
 
 def _create_output_projection(target_size,
@@ -35,40 +67,55 @@ def _create_output_projection(target_size,
   return (weights, biases, weights_t)
 
 
-
 def _verify_recurrent_stack_architecture(stack_json, top_bidirectional_layer_allowed=False):
-  permitted_input_merge_modes = [False,'concat','sum'] #when multiple layers connect to an LSTM/GRU, what do we do with these inputs? concat or sum, for now
-  permitted_unidirectional_output_merge_modes = [False] #when a unidirectional LSTM has outputs for each time step, we dont have anything special to do. This is just for readability
-  permitted_bidirectional_output_merge_modes = [False,'concat','sum']
+
+  #TODO - input validation on datatypes and input domains.
+  """
+  Verifies that the json inputs are valid architectures for an lstm or gru stack based on the interpreter in the encoder and decoder
+
+  See the template file for a more detailed explanation
+
+  Args:
+  stack_json: Nested dictionary - Represents the encoder or decoder json.
+              This is a result of calling the json module's load() function and passing the "encoder" or "decoder" key value.
+  top_bidirectional_layer_allowed: Boolean - Whether or not the last layer in the stack can output a forward and a backward sequence (true), or just a forward sequence (false)
+
+  Returns: Boolean - False if there are any violations in the arithmetic or parameter combinations, otherwise True
+
+  """
+  is_lstm = stack_json["use_lstm"]
+  permitted_input_merge_modes = [False,'concat','sum'] #when multiple layers connect to an LSTM/GRU, what do we do with these inputs? concat or sum are the only options. first layer of stack must have value 'false'
+  permitted_unidirectional_output_merge_modes = [False] #when a unidirectional LSTM/GRU has outputs for each time step, we dont have anything special to do. This is just for readability
+  permitted_bidirectional_output_merge_modes = [False,'concat','sum'] #if all connected inputs will 'concat' or 'sum' their inputs, then you might as well merge the outputs right off the bat. Otherwise False
 
   cur_layer_index = 0
   output_sizes = {}
-
-  # example structure for what output sizes looks like
-  # output_sizes = {
-  #   'encoder0' : [512,512],
-  #   'encoder1' : [512,512],
-  #   'encoder2' : [1024],
-  #   'encoder3' : [1024],
-  #   'encoder_names_arent_in_a_specific_pattern_because_they_are_an_ordered_dict' : [1024]
-  # }
   
   #go one-by-one and make sure the architecture layer sizes add up
   for layer_name, layer_parameters in stack_json["layers"].iteritems():
 
-    if cur_layer_index == 0:
-      assert layer_parameters["input_merge_mode"] == False, "Input merge mode for first layer must be False"
+    if cur_layer_index == 0 and layer_parameters["input_merge_mode"] != False:
+        print("Input merge mode for first layer must be False")
+        return False
     
     #merge mode is either concat or sum
-    assert layer_parameters["input_merge_mode"] in permitted_input_merge_modes, "Merge mode in %s is invalid" % layer_name
+    if layer_parameters["input_merge_mode"] not in permitted_input_merge_modes:
+      print("Merge mode in %s is invalid" % layer_name)
+      return False
 
     #no peephole connections on GRU's
-    if not layer_parameters["lstm"]:
-      assert not layer_parameters["peepholes"], "Cannot use peephole connections in layer %s because this is not an LSTM" % layer_name
+    if not is_lstm and layer_parameters["peepholes"]:
+        print("Cannot use peephole connections in layer %s because this is not an LSTM" % layer_name)
+        return False
 
     #Forget bias and dropout probabilities are in 0-1 range
-    assert layer_parameters["init_forget_bias"] >= 0. and layer_parameters["init_forget_bias"] <= 1., "Forget bias for layer %s must be between 0-1" % layer_name
-    assert layer_parameters["dropout_keep_prob"] >= 0. and layer_parameters["dropout_keep_prob"] <= 1., "dropout_keep_prob for layer %s must be between 0-1" % layer_name
+    if layer_parameters["init_forget_bias"] < 0. or layer_parameters["init_forget_bias"] > 1.:
+      print("Forget bias for layer %s must be between 0-1" % layer_name)
+      return False
+    
+    if layer_parameters["dropout_keep_prob"] < 0. or layer_parameters["dropout_keep_prob"] > 1.:
+      print("dropout_keep_prob for layer %s must be between 0-1" % layer_name)
+      return False
 
     #verify that the output merge modes are either concat or sum or false if the layer is bidirectional, 
     #and that it is false if it is unidirectional
@@ -76,92 +123,114 @@ def _verify_recurrent_stack_architecture(stack_json, top_bidirectional_layer_all
     # taking a look at the merge modes.
     #
     if layer_parameters['bidirectional']:
-
       if layer_parameters['output_merge_mode'] == False: #do nothing special to the bidirectional output, store it once for fw and once for bw
-        output_sizes[layer_name] = [ layer_parameters['hidden_size'], layer_parameters['hidden_size'] ]
+        output_sizes[layer_name] = [ layer_parameters['hidden_size'], layer_parameters['hidden_size'] ] #this will be an lstm state tuple of two tensors, or it will be a gru output tensor
       elif layer_parameters['output_merge_mode'] == 'concat':
         output_sizes[layer_name] = [ layer_parameters['hidden_size'] * 2 ]
       elif layer_parameters['output_merge_mode'] == 'sum':
         output_sizes[layer_name] = [ layer_parameters['hidden_size'] ]
       else:
-        raise ValueError("For a bidirectional layer, your merge most be one of the following list:\n%s" % permitted_bidirectional_output_merge_modes)
+        print("For a bidirectional layer, your merge must be one of the following list:\n%s" % permitted_bidirectional_output_merge_modes)
+        return False
     else:
       if layer_parameters['output_merge_mode'] == False:
         output_sizes[layer_name] = [ layer_parameters['hidden_size'] ]
       else:
-        raise ValueError("For a unidirectional layer, your merge most be one of the following list:\n%s" % permitted_unidirectional_output_merge_modes)
+        print("For a unidirectional layer, your merge must be one of the following list:\n%s" % permitted_unidirectional_output_merge_modes)
+        return False
 
     #verify the dimensionality of the expected inputs at layer k equal the output dimensionalities from layers 0->k-1 that connect to k following k's merge mode
     if cur_layer_index == 0:
-      assert layer_parameters['expected_input_size'] == -1, "The expected_input_size of the first layer in the stack must be -1. Instead it is %d" % layer_parameters['expected_input_size']
-      assert len(layer_parameters['input_layers']) == 0, "Input layers for first layer in the stack must be an empty list"
+      if not layer_parameters['expected_input_size'] == -1:
+        print("The expected_input_size of the first layer in the stack must be -1. Instead it is %d" % layer_parameters['expected_input_size'])
+        return False
+      if not len(layer_parameters['input_layers']) == 0:
+        print("Input layers for first layer in the stack must be an empty list")
+        return False
     else:
-      assert len(layer_parameters['input_layers']) > 0, "Input layers for all layers other than the first in the stack must be a list with >1 elements"
+      if not len(layer_parameters['input_layers']) > 0:
+        print("Input layers for all layers other than the first in the stack must be a list with >1 elements")
+        return False
       
       #list off all the output sizes that will connect to this layer
       #print("Analyzing the inputs into layer %d, which expect an input size of %d" % (cur_layer_index, layer_parameters['expected_input_size']))
       connected_layer_sizes = []
       for l_name in layer_parameters['input_layers']:
+        if l_name not in output_sizes.keys():
+          print("Layer name %s not found in list of output layer names. Check .json keys" % l_name)
+          return False
         for sz in output_sizes[l_name]:
           connected_layer_sizes.append(sz) 
       #print("Connected layers to layer %d have sizes %s" % (cur_layer_index, str(connected_layer_sizes)))
 
       #verify the sum/concatenation of these layer sizes is equal to the expected input size
       if layer_parameters['input_merge_mode'] == 'sum':
-        assert len(set(connected_layer_sizes)) == 1, "If using an elementwise summation of outputs from multiple layers, all layers need to output the same size. Instead, input sizes are %s" % (str(connected_layer_sizes))
-        assert connected_layer_sizes[0] == layer_parameters['expected_input_size'], "Layer %s expected input size of %d differs from actual input size of %d" % (layer_name, layer_parameters['expected_input_size'], connected_layer_sizes[0])
+        if not len(set(connected_layer_sizes)) == 1:
+          print("If using an elementwise summation of outputs from multiple layers, all layers need to output the same size. Instead, input sizes are %s" % (str(connected_layer_sizes)))
+          return False
+        if not connected_layer_sizes[0] == layer_parameters['expected_input_size']:
+          print("Layer %s expected input size of %d differs from actual input size of %d" % (layer_name, layer_parameters['expected_input_size'], connected_layer_sizes[0]))
+          return False
       elif layer_parameters['input_merge_mode'] == 'concat':
         sum_connected_layers = sum(connected_layer_sizes)
-        assert sum_connected_layers == layer_parameters['expected_input_size'], "Layer %s expected input size of %d differs from actual input size of %d" % (layer_name, layer_parameters['expected_input_size'], sum_connected_layers)
-
+        if not sum_connected_layers == layer_parameters['expected_input_size']:
+          print("Layer %s expected input size of %d differs from actual input size of %d" % (layer_name, layer_parameters['expected_input_size'], sum_connected_layers))
+          return False
     cur_layer_index += 1
     last_layer = layer_name
 
   #now that we are all done, we should probably check that the final output layer isn't a list of outputs.
   #this is because this needs to be fed to the output projection.
-  assert len(output_sizes.keys()) == cur_layer_index, "Expected an output size key for each layer processed. Have %d keys but final layer index reads %d" % (len(output_sizes.keys()), cur_layer_index) #sanity check, +1 because cur_layer_index start at 0
-  if not top_bidirectional_layer_allowed and stack_json["layers"][last_layer]["bidirectional"] == True:
+  if not len(output_sizes.keys()) == cur_layer_index:
+    print("If this message is seen there is a bug. Expected an output size key for each layer processed. Have %d keys but final layer index reads %d" % (len(output_sizes.keys()), cur_layer_index)) #sanity check, +1 because cur_layer_index start at 0
+    return False
+  if stack_json["layers"][last_layer]["bidirectional"] and not top_bidirectional_layer_allowed:
     print("The top layer cannot be bidirectional as per the default settings passed in verify_encoder_decoder_stack_architecture")
     return False
+  
+  #we made it! party on wayne!
   return True
 
+#TODO - write this when nematus is written
 def _verify_decoder_state_initializer(stack_json, decoder_state_initializer):
+  return True
+
+#TODO - not much to do here other than verify dimensionality expansion with the variable number of attention heads is working properly
+def _verify_attention_architecture(stack_json):
   return True
 
 def verify_encoder_decoder_stack_architecture(stack_json, decoder_state_initializer):
 
   print("Testing Encoder model architecture...")
-  if _verify_recurrent_stack_architecture(stack_json['encoder'], top_bidirectional_layer_allowed=True):
-    print("Valid")
-  else:
-    print ("Invalid")
+  if not _verify_recurrent_stack_architecture(stack_json['encoder'], top_bidirectional_layer_allowed=True):
+    print ("Invalid Encoder Architecture.")
+    return False
+
+  print("Testing Attention mechanism architecture...")
+  if not _verify_attention_architecture(stack_json):
+    print("Invalid Attention Architecture")
     return False
 
   print("Testing Decoder model state initialization...")
-  if _verify_decoder_state_initializer(stack_json, decoder_state_initializer):
-    print("Valid")
-  else: 
+  if not _verify_decoder_state_initializer(stack_json, decoder_state_initializer):
     print ("Invalid")
     return False
 
   print("Testing Decoder model architecture...")
-  if _verify_recurrent_stack_architecture(stack_json['decoder'], top_bidirectional_layer_allowed=False):
-    print("Valid")
-  else:
+  if not _verify_recurrent_stack_architecture(stack_json['decoder'], top_bidirectional_layer_allowed=False):
     print("Invalid")
     return False
 
   return True
 
   
-
 def load_encoder_decoder_architecture_from_json(json_file_path, decoder_state_initializer):
   with open(json_file_path, 'rb') as model_data:
 
     try:
       #notice we have an ordered dictionary. this is because we want to make sure we are going through the layers
-      # in the right order on the verification, and when setting up the network itself. Python runs this is O(n) time
-      # so this doesn't cost us really anything, and we get to have meaningful layer names.
+      # in the right order on the verification, and when setting up the network itself. Python runs O(n) ordered dict ops
+      # so this doesn't cost us a lot, and we get to have meaningful layer names.
       stack_model = json.load(model_data, object_pairs_hook=OrderedDict)
     except ValueError, e:
       print("Invalid json in %s" % json_file_path)
@@ -169,13 +238,11 @@ def load_encoder_decoder_architecture_from_json(json_file_path, decoder_state_in
       raise
     
     print("Loaded JSON model architecture from %s" % json_file_path)
-    print("This architecture will now be verified using decoder state initializer %s..." % decoder_state_initializer)
 
     if verify_encoder_decoder_stack_architecture(stack_model, decoder_state_initializer):
       return stack_model['encoder'], stack_model['decoder'] #this is the JSON object parsed as a python dict
     else:
       raise Exception, "Invalid architecture. Now dying"
-
 
 
 def _get_residual_layer_inputs_as_list(current_layer_name, current_layer_input_list, all_previous_layer_outputs):
@@ -240,8 +307,7 @@ def encoder_decoder_attention(encoder_inputs,
   with variable_scope.variable_scope(scope or "model", dtype=dtype) as scope:
     dtype=scope.dtype
 
-    #TODO - this is where the embedded decoder inputs should be extracted
-    # why? because they might be pre-trained glove/word2vec/fasttext embeddings that aren't trained by the network
+    #TODO - this is probably where the embedded decoder inputs should be extracted
 
     #encoder outputs are a list of length max_encoder_output of tensors with the shape of the top layer
     if FLAGS.encoder_rnn_api == "dynamic":
@@ -272,7 +338,7 @@ def encoder_decoder_attention(encoder_inputs,
     attention_states = encoder.reshape_encoder_outputs_for_attention(final_top_encoder_outputs,
                                                                     dtype=dtype)
 
-    print(attention_states.get_shape())
+    print("Attention Mechanism Shape is " + str(attention_states.get_shape()))
 
     #then we run the decoder.
     return attention_decoder.embedding_attention_decoder(
@@ -407,7 +473,7 @@ def sequence_loss(logits,
 
 
 
-
+#TODO - rewrite the args to this
 def run_eda_architecture(encoder_inputs,
                        decoder_inputs,
                        max_encoder_length,

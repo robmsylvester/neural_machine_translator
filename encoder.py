@@ -10,31 +10,6 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.util import nest
 from collections import OrderedDict
-FLAGS = tf.app.flags.FLAGS
-
-def _create_encoder_cell(json_layer_parameters):
-  if json_layer_parameters['lstm']:
-    return _create_encoder_lstm(json_layer_parameters['hidden_size'],
-                                json_layer_parameters['peepholes'],
-                                json_layer_parameters['init_forget_bias'],
-                                json_layer_parameters['dropout_keep_prob'])
-  else:
-    return _create_encoder_gru(json_layer_parameters['hidden_size'],
-                                json_layer_parameters['peepholes'],
-                                json_layer_parameters['init_forget_bias'],
-                                json_layer_parameters['dropout_keep_prob'])
-
-def _create_encoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_keep_prob):
-  c = core_rnn_cell_impl.LSTMCell(hidden_size, #number of units in the LSTM
-                use_peepholes=use_peepholes,
-                initializer=tf.contrib.layers.xavier_initializer(),
-                forget_bias=init_forget_bias)
-  if dropout_keep_prob < 1.0:
-    c = core_rnn_cell_impl.DropoutWrapper(c, output_keep_prob=dropout_keep_prob)
-  return c
-
-def _create_encoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
-  raise NotImplementedError
 
 # Concatenation of encoder outputs to put attention on.
 # have any reason to use a different variable.
@@ -62,6 +37,7 @@ def reshape_encoder_outputs_for_attention(encoder_outputs,
     return attention_states 
 
 
+#TODO - refactor dynamic vs static if there is time. not crucial though
 def dynamic_embedding_encoder(encoder_json,
                               encoder_inputs,
                               encoder_input_lengths,
@@ -87,6 +63,7 @@ def dynamic_embedding_encoder(encoder_json,
 
     cell_outputs = OrderedDict() #indexed by layer name in json
     cell_states = OrderedDict()
+    use_lstm = encoder_json["use_lstm"]
 
     for layer_name, layer_parameters in encoder_json["layers"].iteritems(): #this is an ordered dict
       with variable_scope.variable_scope(layer_name) as scope:
@@ -100,8 +77,8 @@ def dynamic_embedding_encoder(encoder_json,
         #this will give us the outputs, and we can combine them as necessary
         #c stands for cell, out for outputs, f for forward, b for backward
         if layer_parameters['bidirectional']:
-          cf = _create_encoder_cell(layer_parameters)
-          cb = _create_encoder_cell(layer_parameters)
+          cf = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
+          cb = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
 
           out_fb, state_fb = tf.nn.bidirectional_dynamic_rnn(cf,
                                                             cb,
@@ -130,7 +107,7 @@ def dynamic_embedding_encoder(encoder_json,
           cell_states[layer_name] = [state_f,state_b]
 
         else:
-          cf = _create_encoder_cell(layer_parameters)
+          cf = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
 
           #out_f is a list of tensor outputs, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
           out_f, state_f = tf.nn.dynamic_rnn(cf,
@@ -138,20 +115,15 @@ def dynamic_embedding_encoder(encoder_json,
                                             sequence_length=encoder_input_lengths,
                                             dtype=dtype,
                                             time_major=True)
-
-          #print("unidirectional rnn ran.\n\ttype of out_f is %s\n\ttype of state_f is %s" % (str(type(out_f)),str(type(state_f))))
           cell_outputs[layer_name] = [out_f]
           cell_states[layer_name] = [state_f]
 
       top_layer = layer_name # just for readability
 
-    if FLAGS.decoder_state_initializer == 'nematus':
-      raise NotImplementedError, "Haven't written the nematus decoder state initializer yet, and currently this function only returns and tracks top-level states in the loop."
-
     #We do this anyway outside of the if statement, because the concatenation won't do anything otherwise, and the unstack 
     #If they had previously merged them via an explicit call to concat or sum, that this would be fine.
     if len(cell_outputs[top_layer]) > 1:
-      print("WARNING - your top layer cell outputs more than a single tensor at each time step. Perhaps it is bidirectional with no output merge mode specified. These tensors will be concatenated along their final axis. You should change this in the JSON to be 'concat' for readability, or 'sum' if you want the tensors element-wise added.")
+      print("WARNING - your top layer cell outputs more than a single tensor at each time step. Is it bidirectional with no output merge mode specified? These tensors will be concatenated along their final axis. You should change this in the JSON to be 'concat' for readability, or 'sum' if you want the tensors element-wise added before they are fed to the attention decoder")
     
     stack_output = tf.unstack(tf.concat(cell_outputs[top_layer], axis=2))
 
@@ -159,7 +131,6 @@ def dynamic_embedding_encoder(encoder_json,
 
     #This output should be a list with one element
     return stack_output, stack_states
-
 
 
 def static_embedding_encoder(encoder_json,
@@ -189,6 +160,7 @@ def static_embedding_encoder(encoder_json,
 
     cell_outputs = OrderedDict() #indexed by layer name in json
     cell_states = OrderedDict()
+    use_lstm = encoder_json["use_lstm"]
 
     for layer_name, layer_parameters in encoder_json["layers"].iteritems(): #this is an ordered dict
 
@@ -204,8 +176,8 @@ def static_embedding_encoder(encoder_json,
         #this will give us the outputs, and we can combine them as necessary
         #c stands for cell, out for outputs, f for forward, b for backward
         if layer_parameters['bidirectional']:
-          cf = _create_encoder_cell(layer_parameters)
-          cb = _create_encoder_cell(layer_parameters)
+          cf = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
+          cb = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
           out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf, cb, inputs, dtype=dtype)
 
           #store the outputs according to how they have to be merged.
@@ -233,11 +205,10 @@ def static_embedding_encoder(encoder_json,
           cell_states[layer_name] = [state_f,state_b]
 
         else:
-          cf = _create_encoder_cell(layer_parameters)
+          cf = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
 
           #out_f is a list of tensor outputs, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
           out_f, state_f = core_rnn.static_rnn(cf, inputs, dtype=dtype)
-          #print("unidirectional rnn ran.\n\ttype of out_f is %s\n\ttype of state_f is %s" % (str(type(out_f)),str(type(state_f))))
           cell_outputs[layer_name] = [out_f]
           cell_states[layer_name] = [state_f]
 
@@ -247,9 +218,6 @@ def static_embedding_encoder(encoder_json,
     #we do care about the states, but only the top most state, which is what is stored in state_f unless it is bidirectional
     #we do care about the outputs, but they might be bidirectional outputs too, so we must check that as well
     #for now, we will just concatenate these by default
-
-    if FLAGS.decoder_state_initializer == 'nematus':
-      raise NotImplementedError, "Haven't written the nematus decoder state initializer yet, and currently this function only returns and tracks top-level states in the loop."
 
     #We do this anyway outside of the if statement, because the concatenation won't do anything otherwise, and the unstack 
     if len(cell_outputs[top_layer]) > 1:

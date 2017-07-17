@@ -26,41 +26,16 @@ from tensorflow.contrib.layers import fully_connected
 linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
 
 
-def _create_decoder_cell(json_layer_parameters):
-  if json_layer_parameters['lstm']:
-    return _create_decoder_lstm(json_layer_parameters['hidden_size'],
-                                json_layer_parameters['peepholes'],
-                                json_layer_parameters['init_forget_bias'],
-                                json_layer_parameters['dropout_keep_prob'])
-  else:
-    return _create_decoder_gru(json_layer_parameters['hidden_size'],
-                                json_layer_parameters['peepholes'],
-                                json_layer_parameters['init_forget_bias'],
-                                json_layer_parameters['dropout_keep_prob'])
-
-def _create_decoder_lstm(hidden_size, use_peepholes, init_forget_bias, dropout_keep_prob):
-  c = core_rnn_cell_impl.LSTMCell(hidden_size, #number of units in the LSTM
-                use_peepholes=use_peepholes,
-                initializer=tf.contrib.layers.xavier_initializer(),
-                forget_bias=init_forget_bias)
-  if dropout_keep_prob < 1.0:
-    c = core_rnn_cell_impl.DropoutWrapper(c, output_keep_prob=dropout_keep_prob)
-  return c
-
-def _create_decoder_gru(hidden_size, init_forget_bias, dropout_keep_prob):
-  raise NotImplementedError
-
-
 #NOTE - Bahdanu attention for deep models adds a lot of parameters, so do this only if you have a lot of time
-# and a good gpu or two or ten
-def _initialize_decoder_states_bahdanu(final_encoder_state_tensor, decoder_architecture, is_lstm):
+# or a good gpu (or two)
+def _initialize_decoder_states_bahdanu(final_encoder_state_tensor, decoder_architecture, use_lstm):
   #Args:
   # 1. final_encoder_state_tensor - the final encoder state tensor is a single tensor representing the values of the states at the final time step
   #  for the top layer in the encoder. it has dimension (batch_size, hidden_size). in the event that the final layer
   #  is bidirectional, this will only be the BACKWARD cell states, so still a tensor of size (batch_size, hidden_size)
-  #  if is_lstm is true, then this is an lstmstatetuple, which stores two tensors of the dimensionality (batch_size, hidden_size.
+  #  if use_lstm is true, then this is an lstmstatetuple, which stores two tensors of the dimensionality (batch_size, hidden_size.
   # 2. decoder architecture - json object
-  # 3. is_lstm - whether to break apart the tuple and use two weights or just one in the event that you are using gru's
+  # 3. use_lstm - whether to break apart the tuple and use two weights or just one in the event that you are using gru's
   #Returns:
   # A python list of lists, of length decoder_architecture[num_layers], where each list has length 1 or 2, depending on if that layer is bidirectional
   #  these lists contain tensors to use as the initial values for the lstms in the decoder
@@ -70,13 +45,16 @@ def _initialize_decoder_states_bahdanu(final_encoder_state_tensor, decoder_archi
 
   for layer_idx, layer_parameters in decoder_architecture['layers'].iteritems():
 
-    if is_lstm:
+    if use_lstm:
+
+      assert final_encoder_state_tensor.__class__.__name__ == 'LSTMStateTuple', "Expected final encoder state tensor to be an LSTM State Tuple because is_lstm argument is True"
+
       cell_state,hidden_state = final_encoder_state_tensor
       
       dec_cell_state = fully_connected(cell_state,
                                       layer_parameters["hidden_size"],
                                       activation_fn=None, #linear activation for states
-                                      weights_initializer=initializers.xavier_initializer(), #or do i want random uniform?
+                                      weights_initializer=initializers.xavier_initializer(),
                                       biases_initializer=init_ops.zeros_initializer(),
                                       reuse=True,
                                       scope="dec_%s_lstm_cell_state_init_linear"%layer_idx)
@@ -84,15 +62,15 @@ def _initialize_decoder_states_bahdanu(final_encoder_state_tensor, decoder_archi
       dec_hidden_state = fully_connected(cell_state,
                                 layer_parameters["hidden_size"],
                                 activation_fn=None, #linear activation for states
-                                weights_initializer=initializers.xavier_initializer(), #or do i want random uniform?
+                                weights_initializer=initializers.xavier_initializer(),
                                 biases_initializer=init_ops.zeros_initializer(),
                                 reuse=True,
                                 scope="dec_%s_lstm_hidden_state_init_linear"%layer_idx)
 
+      #reform the lstm tuple for the initial states of each layer in the decoder
       dec_state = core_rnn_cell_impl.LSTMStateTuple(dec_cell_state, dec_hidden_state)
 
     else: #is gru
-      raise NotImplementedError, "GRU support has not been implemented"
       dec_state = fully_connected(final_encoder_state_tensor,
                             layer_parameters["hidden_size"],
                             activation_fn=None, #linear activation for states
@@ -101,39 +79,51 @@ def _initialize_decoder_states_bahdanu(final_encoder_state_tensor, decoder_archi
                             reuse=True,
                             scope="dec_%s_gru_state_init_linear"%layer_idx)
 
-    #store the tensors in a list of lists
+    #store the tensors in a list of lists.
+    #yes, bidirectional decoder initializers use the same state.
     initial_decoder_state_tensors.append( [dec_state, dec_state] if layer_parameters["bidirectional"] else [dec_state] )
 
   return initial_decoder_state_tensors
 
 
-#final_encoder_states - a list of lists containing 1 or 2 LSTM State Tuple/GRU States, depending on if that layer was bidirectional
-#num_decoder_layers, an integer representing the depth of the stack of LSTMS/GRU's, but just for sanity until likely removed.
-#returns the state for the decoder to start as a list itself, indexed by stack depth of the lstm or gru.
-def initialize_decoder_states_from_final_encoder_states(final_encoder_states, decoder_architecture, decoder_state_initializer):
 
-  #option to mimic encoder-decoder states if architectures are perfect mirror
-  #option to just do what i did above, and use top layer status for all of them. still need parameterization
-  #use a mean of the source annotation as per https://arxiv.org/pdf/1703.04357.pdf
+def initialize_decoder_states_from_final_encoder_states(final_encoder_states, decoder_architecture, decoder_state_initializer):
+  """
+  We have a few options with what to do with the final encoder states and how to initialize the decoder states from them
+   1 option -to mimic encoder-decoder states if architectures are perfect mirror
+   2 option -to just do what i did above, and use top layer status for all of them. still need parameterization
+   3 option -use a mean of the source annotation as per https://arxiv.org/pdf/1703.04357.pdf
+
+  Args
+  final_encoder_states - a list of lists containing 1 or 2 LSTM State Tuple/GRU States, depending on if that layer was bidirectional
+  num_decoder_layers - an integer representing the depth of the stack of LSTMS/GRU's, but just for sanity until likely removed.
+  
+  Returns:
+  List of lstm state tuples or tensors if using GRU's.
+   This will be the state for the decoder to start as a list itself at time step 0, indexed by stack depth of the lstm or gru.
+  """
+
+  use_lstm = decoder_architecture['use_lstm']
   
   if decoder_state_initializer == "mirror":
     return final_encoder_states #the encoder states will be used 1-for-1 in the decoder architecture because it's exactly the same
 
   elif decoder_state_initializer == "top_layer_mirror":
 
-    #this won't necessarily work for all arbitrary geometries? i think its okay, UNLESS we mix GRU's with LSTM's
-    #it also won't work if the top layer was bidirectional because we concatenated the states!
     if len(final_encoder_states[-1]) == 2:
-      combined_lstm_tuple = _concatenate_bidirectional_lstm_state_tuples(final_encoder_states[-1][0], final_encoder_states[-1][1])    
-      return [ [combined_lstm_tuple] for _ in xrange(decoder_architecture['num_layers'])] #a list of lists of LSTM State Tuples
+      if use_lstm: #we will return a list of lists of LSTM State Tuples
+        combined_lstm_tuple = _concatenate_bidirectional_lstm_state_tuples(final_encoder_states[-1][0], final_encoder_states[-1][1])    
+        return [ [combined_lstm_tuple] for _ in xrange(decoder_architecture['num_layers'])]
+      else: #we will return a concatenated gru tensor from both time steps
+        combined_gru_tensor = tf.concat([final_encoder_states[-1][0], final_encoder_states[-1][1] ], axis=1 )
     else:
-      return [final_encoder_states[-1] for _ in xrange(decoder_architecture['num_layers'])] #a list of lists of LSTM State Tuples
+      return [final_encoder_states[-1] for _ in xrange(decoder_architecture['num_layers'])] #a list of lists of LSTM State Tuples, or a list of lists of GRU Tensors
   
   elif decoder_state_initializer == "nematus":
     raise NotImplementedError, "Nematus intializer is not implemented. To do this. All encoder states need to be tracked or averaged in the encoder pass"
   
   elif decoder_state_initializer == "bahdanu": #only take the backward bidirectional states, if they're there.
-    return _initialize_decoder_states_bahdanu(final_encoder_states[-1][-1], decoder_architecture, is_lstm=True) #TODO - remove this True statement when GRU implemented
+    return _initialize_decoder_states_bahdanu(final_encoder_states[-1][-1], decoder_architecture, use_lstm=decoder_architecture['use_lstm'])
   else:
     raise NotImplementedError, "No other decoder state initialization has been written yet."
 
@@ -150,14 +140,13 @@ def _concatenate_bidirectional_lstm_state_tuples(lstm_fw_state_tuple, lstm_bw_st
 
 
 
-#TODO - remove dec_state_initializer argument
-def _prepare_top_lstm_encoder_state_for_attention(top_states):
+def _prepare_top_encoder_state_for_attention(top_states, use_lstm=True):
   """
-  Takes a look at the top states of the encoder stack, which should be LSTM State Tuples
-  There is probably just one LSTM state tuple, but there will be two if they are bidirectional at the top layer of encoder.
-  If they are not bidirectional, just return the LSTM
+  Takes a look at the top states of the encoder stack, which should be LSTM State Tuples or Tensors representing GRU States
+  There is probably just one LSTM state tuple / gru state, but there will be two if they are bidirectional at the top layer of encoder.
+  If they are not bidirectional, just return the state
   If they are bidirectional, concatenate the cell states and hidden states of the two tuples together and return a single
-   LSTMStateTuple of size (2x cell state, 2x hidden state)
+   LSTMStateTuple of size (2x cell state, 2x hidden state). If GRU's, just concatenate along axis 1
 
   #Parameters:
   #top states is a list of encoder states at the top layer of the encoder stack.
@@ -168,14 +157,16 @@ def _prepare_top_lstm_encoder_state_for_attention(top_states):
    LSTM state tuple.
   """
   assert isinstance(top_states, (list)), "top states must be a list"
-  assert top_states[0].__class__.__name__ == 'LSTMStateTuple', "Expected LSTM State Tuple. Got %s" % top_states[0].__class__.__name__#otherwise it is a GRU
+  if use_lstm:
+    assert top_states[0].__class__.__name__ == 'LSTMStateTuple', "Expected LSTM State Tuple. Got %s" % top_states[0].__class__.__name__#otherwise it is a GRU
 
-  #TODO - For now, this is more of a sanity check, but refactor this elsewhere
   if len(top_states) == 2:
+    if use_lstm:
       top_encoder_state = _concatenate_bidirectional_lstm_state_tuples(top_states[0], top_states[1])
-  
+    else:
+      top_encoder_state = tf.concat([top_states[0], top_states[1]], axis=1 )
   elif len(top_states) == 1:
-    top_encoder_state = top_states[0] #just a single lstm state tuple, so we're good
+    top_encoder_state = top_states[0] #just a single lstm state tuple or gru tensor, so we're good
   else:
     raise ValueError("Too many states at top layer. Expected one or two. This isn't necessarily an error, but it is the case that there is no support yet written for an architecture that sees more than just a forward and backward state")
 
@@ -293,6 +284,7 @@ def one_step_decoder(decoder_json, attn_input, input_lengths, hidden_states_stac
     current_layer = 0
     cell_outputs = OrderedDict()
     output_size = None
+    use_lstm = decoder_json['use_lstm']
     #new_cell_states = OrderedDict() #probably dont need this, write over hidden_states_stack
 
     for layer_name, layer_parameters in decoder_json["layers"].iteritems(): #this is an ordered dict, so this is okay
@@ -309,16 +301,14 @@ def one_step_decoder(decoder_json, attn_input, input_lengths, hidden_states_stac
         #we dont return a list because we pass this to a dynamic decoder, which is just one tensor and uses the time major axis instead of a list of length max time
         inputs = model_utils._combine_residual_inputs(input_list, layer_parameters['input_merge_mode'], return_list=True) if len(input_list) else [attn_input]
 
-        #print("\t\tAbout to run the network layer. Inputs have shape %s and length %d" % (str(inputs[0].get_shape()), len(inputs)))
-
-                #create/get the cells, and run them
+        #create/get the cells, and run them
         #this will give us the outputs, and we can combine them as necessary
         #c stands for cell, out for outputs, f for forward, b for backward
         if layer_parameters['bidirectional']:
           assert isinstance(hidden_states_stack[current_layer], (list)), "Current layers hidden states stack must be a list because it is bidirectional"
           assert len(hidden_states_stack[current_layer]) == 2, "Expected current layer to have two initial hidden states, but instead have %d" % len(hidden_states_stack)
-          cf = _create_decoder_cell(layer_parameters)
-          cb = _create_decoder_cell(layer_parameters)
+          cf = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
+          cb = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
           out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf,
                                                                               cb,
                                                                               inputs, #ONE TIME STEP
@@ -327,7 +317,6 @@ def one_step_decoder(decoder_json, attn_input, input_lengths, hidden_states_stac
                                                                               dtype=dtype)
           #store the outputs according to how they have to be merged.
           #they will be a list with 2 elements, the forward and backward outputs. or, a list with one element, the concatenation or sum of the 2 elements.
-          
           if layer_parameters['output_merge_mode'] == 'concat':
 
             # Concat each of the forward/backward outputs
@@ -353,11 +342,10 @@ def one_step_decoder(decoder_json, attn_input, input_lengths, hidden_states_stac
           hidden_states_stack[current_layer] = [state_f,state_b]
 
         else:
-          cf = _create_decoder_cell(layer_parameters)
+          cf = model_utils._create_rnn_cell(layer_parameters)
 
           #out_f is a list of tensor outputs, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
           out_f, state_f = core_rnn.static_rnn(cf, inputs, initial_state=hidden_states_stack[current_layer][0], dtype=dtype) #ONE TIME STEP
-          #print("\t\tunidirectional rnn ran.\n\ttype of out_f is %s\n\ttype of state_f is %s" % (str(type(out_f)),str(type(state_f))))
           cell_outputs[layer_name] = [out_f]
           hidden_states_stack[current_layer] = [state_f]
 
@@ -410,20 +398,20 @@ def run_bahdanu_attention_mechanism(query_state,
                                     weights_v,
                                     num_attention_heads,
                                     attention_size,
-                                    attention_length):
+                                    attention_length,
+                                    use_lstm=True):
 
   attention_reads = [] #This will be built dynamically as we read through the attention head
 
-  #if is_lstm:
-  assert query_state.__class__.__name__ == 'LSTMStateTuple', "The decoder state passed to the attention model must be an LSTMStateTuple (c,h)"
-  #else assert gru
+  if use_lstm:
+    assert query_state.__class__.__name__ == 'LSTMStateTuple', "The decoder state passed to the attention model must be an LSTMStateTuple (c,h)"
+  #else it's a gru
 
   #let's verify that the cell state and the hidden state
   assert len(hidden_attention_states) == num_attention_heads, "There must be the same number of calculated hidden attention states from the 1x1 convolution as there are number of attention heads."
 
   #now we concatenate the two states of the lstm across the second dimension (the one that is not the batch size) 
-  #so that we may run the attention model on it
-  #notice that this means we are concatenating the LSTM cell state and the lstm hidden state across one dimension
+  #notice that this means we are concatenating the LSTM cell state and the lstm hidden state across one dimension if it's an lstm
   query_state = tf.concat(nest.flatten(query_state), 1) #axis=1
 
   for head_idx in xrange(num_attention_heads):
@@ -470,7 +458,7 @@ def attention_decoder(decoder_architecture,
                       decoder_state_initializer,
                       decoder_inputs,
                       decoder_input_lengths,
-                      final_encoder_states, #This is a LIST
+                      final_encoder_states, #This is a LIST of either LSTMStateTuples or GRU State Tensors
                       attention_states,
                       output_size=None,
                       num_heads=1,
@@ -489,7 +477,7 @@ def attention_decoder(decoder_architecture,
       length the target language bucket size is. 
 
     final_encoder_states: The initial decoder state will be calculated from this.
-      This will be a list of LSTMStateTuples or GRU States, and this list might well
+      This will be a list of LSTMStateTuples or GRU States (Tensors), and this list might well
       only have one element if the network is one layer deep. The indexes refer
       to the cell depths, ie, final_encoder_state[1] would be an LSTMStateTuple for layer 2's
       lstm cell state in the final layer of the encoder. If using GRU's, then final_encoder_states[4]
@@ -540,10 +528,14 @@ def attention_decoder(decoder_architecture,
       from the input.
   """
 
+  use_lstm = decoder_architecture['use_lstm']
+
   assert isinstance(final_encoder_states, (list)), "Final encoder states must be a list of lists"
+  if use_lstm:
+    assert final_encoder_states[0][0].__class__.__name__ == 'LSTMStateTuple', "Expected final encoder states to be a list of list of lstm state tuples"
+  #else its a GRU
 
   #TODO - introduce manning's attention mechanism that scores h_t * (W*h_s) instead of this version
-  #THIS REQUIRES A REFACTOR
 
   #Bahdanu attention has more trainable weights (3 sets) compared to Manning's (1 set of weights)
   with variable_scope.variable_scope(scope or "attention_decoder", dtype=dtype) as scope:
@@ -562,9 +554,6 @@ def attention_decoder(decoder_architecture,
     # these need to be reshaped for a convolutional operation that represents the 
     reshaped_attention_states = array_ops.reshape(attention_states,
                                [-1, attn_length, 1, attn_size])
-
-    #print("reshaped attention states have shape %s" % str(reshaped_attention_states.get_shape()))=
-    #print("the attention decoder has reshaped the attention state to size " + str(reshaped_attention_states.get_shape()))
 
     #we need to construct the following equation:
     # attention = softmax(V^T * tanh(W_1 * attention_states + W_2 * new_state)), where new_state is produced on each cell output
@@ -595,8 +584,9 @@ def attention_decoder(decoder_architecture,
     if initial_state_attention:
 
       top_encoder_state_list = final_encoder_states[-1]
-      reshaped_top_encoder_state = _prepare_top_lstm_encoder_state_for_attention(top_encoder_state_list) #makes one tensor if top encoder layer is bidirectional
 
+      reshaped_top_encoder_state = _prepare_top_encoder_state_for_attention(top_encoder_state_list, use_lstm=use_lstm) #makes one tensor if top encoder layer is bidirectional
+      
       attentions = run_bahdanu_attention_mechanism(reshaped_top_encoder_state,
                                                     reshaped_attention_states,
                                                     hidden_attention_states,
@@ -656,7 +646,7 @@ def attention_decoder(decoder_architecture,
       #TODO - this probably needs to become [-1][0] because this is a list of lists, so this assertion should catch it
       #print("I am looking for a list. List element zero is type %s" % str(hidden_states[-1][0].__class__.__name__))
       assert decoder_hidden_states[-1].__class__.__name__ == 'list', "Decoder hidden state's elements are lists."
-      assert len(decoder_hidden_states[-1]) == 1, "decoder hidden state at top layer needs to only have one lstmstatetuple in the list. this is because we pass it directly as the query to the bahdanu attention mechanism, which expects an lstm tuple"
+      assert len(decoder_hidden_states[-1]) == 1, "decoder hidden state at top layer needs to only have one lstmstatetuple/gru in the list. this is because we pass it directly as the query to the bahdanu attention mechanism, which expects an lstm tuple"
       
       #still decoder state will be an LSTMStateTuple
       top_decoder_state = decoder_hidden_states[-1][0]

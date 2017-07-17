@@ -87,7 +87,6 @@ def get_word_embeddings(inputs,
       embedded_inputs = tf.nn.embedding_lookup(emb, inputs)
 
       #these embedded inputs came in as a list. now they will be of the shape (bucket_size, batch_size, embed_size)
-
       #if return list is true (static encoder api), so we reshape them back into a list of length bucket_size containing tensors of shape (batch_size, embed_size)
       if return_list:
         return tf.unstack(embedded_inputs), emb

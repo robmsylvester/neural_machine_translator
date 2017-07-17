@@ -1,13 +1,13 @@
  {
  	"encoder" : {
+ 		"use_lstm": true,
 		"num_layers": 3,
 		"layers": {
 			"encoder0": {
-				"lstm": true,
 				"peepholes" : false,
 				"bidirectional" : true,
 				"expected_input_size" : -1,
-				"hidden_size" : 1024,
+				"hidden_size" : 256,
 				"dropout_keep_prob" : 1.0,
 				"init_forget_bias" : 0.0,
 				"input_layers" : [],
@@ -15,11 +15,10 @@
 				"input_merge_mode" : false
 			},
 			"encoder1": {
-				"lstm": true,
 				"peepholes" : false,
 				"bidirectional" : true,
-				"expected_input_size" : 2048,
-				"hidden_size" : 1024,
+				"expected_input_size" : 512,
+				"hidden_size" : 256,
 				"dropout_keep_prob" : 1.0,
 				"init_forget_bias" : 0.0,
 				"input_layers" : ["encoder0"],
@@ -27,11 +26,10 @@
 				"input_merge_mode" : "concat"
 			},
 			"encoder2": {
-				"lstm": true,
 				"peepholes" : false,
 				"bidirectional" : false,
-				"expected_input_size" : 1024,
-				"hidden_size" : 1024,
+				"expected_input_size" : 256,
+				"hidden_size" : 256,
 				"dropout_keep_prob" : 1.0,
 				"init_forget_bias" : 0.0,
 				"input_layers" : ["encoder1"],
@@ -41,14 +39,14 @@
 		}
 	},
 	"decoder" : {
+		"use_lstm": true,
 		"num_layers": 3,
 		"layers": {
 			"decoder0": {
-				"lstm": true,
 				"peepholes" : false,
 				"bidirectional" : false,
 				"expected_input_size" : -1,
-				"hidden_size" : 1024,
+				"hidden_size" : 256,
 				"dropout_keep_prob" : 1.0,
 				"init_forget_bias" : 0.0,
 				"input_layers" : [],
@@ -56,11 +54,10 @@
 				"input_merge_mode" : false
 			},
 			"decoder1": {
-				"lstm": true,
 				"peepholes" : false,
 				"bidirectional" : false,
-				"expected_input_size" : 1024,
-				"hidden_size" : 1024,
+				"expected_input_size" : 256,
+				"hidden_size" : 256,
 				"dropout_keep_prob" : 1.0,
 				"init_forget_bias" : 0.0,
 				"input_layers" : ["decoder0"],
@@ -68,11 +65,10 @@
 				"input_merge_mode" : "concat"
 			},
 			"decoder2": {
-				"lstm": true,
 				"peepholes" : false,
 				"bidirectional" : false,
-				"expected_input_size" : 1024,
-				"hidden_size" : 1024,
+				"expected_input_size" : 256,
+				"hidden_size" : 256,
 				"dropout_keep_prob" : 1.0,
 				"init_forget_bias" : 0.0,
 				"input_layers" : ["decoder0", "decoder1"],
