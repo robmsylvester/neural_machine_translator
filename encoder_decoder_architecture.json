@@ -1,6 +1,6 @@
  {
  	"encoder" : {
- 		"use_lstm": true,
+ 		"use_lstm": false,
 		"num_layers": 3,
 		"layers": {
 			"encoder0": {
@@ -39,7 +39,7 @@
 		}
 	},
 	"decoder" : {
-		"use_lstm": true,
+		"use_lstm": false,
 		"num_layers": 3,
 		"layers": {
 			"decoder0": {

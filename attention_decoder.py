@@ -28,7 +28,7 @@ linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
 
 #NOTE - Bahdanu attention for deep models adds a lot of parameters, so do this only if you have a lot of time
 # or a good gpu (or two)
-def _initialize_decoder_states_bahdanu(final_encoder_state_tensor, decoder_architecture, use_lstm):
+def _initialize_decoder_states_bahdanu(final_encoder_state_tensor, decoder_architecture):
   #Args:
   # 1. final_encoder_state_tensor - the final encoder state tensor is a single tensor representing the values of the states at the final time step
   #  for the top layer in the encoder. it has dimension (batch_size, hidden_size). in the event that the final layer
@@ -41,15 +41,17 @@ def _initialize_decoder_states_bahdanu(final_encoder_state_tensor, decoder_archi
   #  these lists contain tensors to use as the initial values for the lstms in the decoder
   #
 
+  use_lstm = decoder_architecture['use_lstm']
+
   initial_decoder_state_tensors = [] #list of lists
 
   for layer_idx, layer_parameters in decoder_architecture['layers'].iteritems():
 
     if use_lstm:
 
-      assert final_encoder_state_tensor.__class__.__name__ == 'LSTMStateTuple', "Expected final encoder state tensor to be an LSTM State Tuple because is_lstm argument is True"
+      assert final_encoder_state_tensor.__class__.__name__ == 'LSTMStateTuple', "Expected final encoder state tensor to be an LSTM State Tuple because use_lstm property is true in json decoder archiecture"
 
-      cell_state,hidden_state = final_encoder_state_tensor
+      cell_state, hidden_state = final_encoder_state_tensor, "Expected final encoder state tensor to be a Tensor object because use_lstm property is false (using a GRU) in json decoder archiecture"
       
       dec_cell_state = fully_connected(cell_state,
                                       layer_parameters["hidden_size"],
@@ -71,6 +73,9 @@ def _initialize_decoder_states_bahdanu(final_encoder_state_tensor, decoder_archi
       dec_state = core_rnn_cell_impl.LSTMStateTuple(dec_cell_state, dec_hidden_state)
 
     else: #is gru
+
+      assert final_encoder_state_tensor.__class__.__name__ == 'Tensor', "The decoder state passed to the attention mechanism model when using a GRU must be a tensorflow 'Tensor' class"
+
       dec_state = fully_connected(final_encoder_state_tensor,
                             layer_parameters["hidden_size"],
                             activation_fn=None, #linear activation for states
@@ -123,7 +128,7 @@ def initialize_decoder_states_from_final_encoder_states(final_encoder_states, de
     raise NotImplementedError, "Nematus intializer is not implemented. To do this. All encoder states need to be tracked or averaged in the encoder pass"
   
   elif decoder_state_initializer == "bahdanu": #only take the backward bidirectional states, if they're there.
-    return _initialize_decoder_states_bahdanu(final_encoder_states[-1][-1], decoder_architecture, use_lstm=decoder_architecture['use_lstm'])
+    return _initialize_decoder_states_bahdanu(final_encoder_states[-1][-1], decoder_architecture, use_lstm=use_lstm)
   else:
     raise NotImplementedError, "No other decoder state initialization has been written yet."
 
@@ -272,13 +277,11 @@ def one_step_decoder(decoder_json, attn_input, input_lengths, hidden_states_stac
 # precisely because of this attention mechanism, and this is why we have the hidden states stack.
 # this stack will be used so that we can pass in an initial state for the different layers in the 
 # decoder stack when we are outputting.
+# This is called a one-step decoder because it only has 1 time step's worth of inputs. We intercept
+# outputs and play with them and feed them into the attention mechanism after every time step so it
+# means we do not wrap a dynamic rnn implementation around this in TF. We can just use static with
+# time=1
 
-  #sanity checks if you want them
-  #print("\t\ttype of hidden states stack is %s" % str(type(hidden_states_stack)))
-  #print("\t\ttype of first element in this stack is %s" % str(type(hidden_states_stack[0])))
-  #print("\t\ttype of first element in the first list of this stack is %s" % str(type(hidden_states_stack[0][0])))
-  #print("\t\tshape of this first LSTM state tuple element is %s" % str(hidden_states_stack[0][0][0].get_shape()))
-  #print("\t\tshape of this second LSTM state tuple element is %s" % str(hidden_states_stack[0][0][0].get_shape()))
   with variable_scope.variable_scope("decoder", dtype=dtype) as scope:
 
     current_layer = 0
@@ -342,7 +345,7 @@ def one_step_decoder(decoder_json, attn_input, input_lengths, hidden_states_stac
           hidden_states_stack[current_layer] = [state_f,state_b]
 
         else:
-          cf = model_utils._create_rnn_cell(layer_parameters)
+          cf = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
 
           #out_f is a list of tensor outputs, state_f is an LSTMStateTuple or GRU State, so we put the state in a single-element list so that both return lists.
           out_f, state_f = core_rnn.static_rnn(cf, inputs, initial_state=hidden_states_stack[current_layer][0], dtype=dtype) #ONE TIME STEP
@@ -391,7 +394,6 @@ def run_manning_attention_mechanism():
   #TODO - write this. simple scoring function of h_t * (W_s * h_s). 1 set of weights vs. 3 in bahdanu's
 
 
-#TODO - add is_lstm argument for gru support when added
 def run_bahdanu_attention_mechanism(query_state,
                                     reshaped_attention_states,
                                     hidden_attention_states,
@@ -404,8 +406,9 @@ def run_bahdanu_attention_mechanism(query_state,
   attention_reads = [] #This will be built dynamically as we read through the attention head
 
   if use_lstm:
-    assert query_state.__class__.__name__ == 'LSTMStateTuple', "The decoder state passed to the attention model must be an LSTMStateTuple (c,h)"
-  #else it's a gru
+    assert query_state.__class__.__name__ == 'LSTMStateTuple', "The decoder state passed to the attention model with use_lstm true must be an LSTMStateTuple (c,h). Instead it is %s" % query_state.__class__.__name__ 
+  else:
+    assert query_state.__class__.__name__ == 'Tensor', "The decoder state passed to the attention mechanism model when using a GRU must be a tensorflow 'Tensor' class"
 
   #let's verify that the cell state and the hidden state
   assert len(hidden_attention_states) == num_attention_heads, "There must be the same number of calculated hidden attention states from the 1x1 convolution as there are number of attention heads."
@@ -533,10 +536,11 @@ def attention_decoder(decoder_architecture,
   assert isinstance(final_encoder_states, (list)), "Final encoder states must be a list of lists"
   if use_lstm:
     assert final_encoder_states[0][0].__class__.__name__ == 'LSTMStateTuple', "Expected final encoder states to be a list of list of lstm state tuples"
-  #else its a GRU
+  else:
+    assert final_encoder_states[0][0].__class__.__name__ == 'Tensor', "Expected final encoder states to be a list of list of Tensors"
 
+  
   #TODO - introduce manning's attention mechanism that scores h_t * (W*h_s) instead of this version
-
   #Bahdanu attention has more trainable weights (3 sets) compared to Manning's (1 set of weights)
   with variable_scope.variable_scope(scope or "attention_decoder", dtype=dtype) as scope:
 
@@ -593,7 +597,8 @@ def attention_decoder(decoder_architecture,
                                                     weights_v,
                                                     num_heads,
                                                     attn_size,
-                                                    attn_length)
+                                                    attn_length,
+                                                    use_lstm=use_lstm)
 
     #We need to initialize the hidden states of the decoder before we start putting inputs into the network
     #This can be done in many ways, so we call this off to another function.
@@ -657,9 +662,23 @@ def attention_decoder(decoder_architecture,
       if decoder_time_step == 0 and initial_state_attention:
         with variable_scope.variable_scope(
             variable_scope.get_variable_scope(), reuse=True):
-          attentions = run_bahdanu_attention_mechanism(top_decoder_state, reshaped_attention_states, hidden_attention_states, weights_v, num_heads, attn_size, attn_length)
+          attentions = run_bahdanu_attention_mechanism(top_decoder_state,
+            reshaped_attention_states,
+            hidden_attention_states,
+            weights_v,
+            num_heads,
+            attn_size,
+            attn_length,
+            use_lstm=use_lstm)
       else:
-        attentions = run_bahdanu_attention_mechanism(top_decoder_state, reshaped_attention_states, hidden_attention_states, weights_v, num_heads, attn_size, attn_length)
+        attentions = run_bahdanu_attention_mechanism(top_decoder_state,
+          reshaped_attention_states,
+          hidden_attention_states,
+          weights_v,
+          num_heads,
+          attn_size,
+          attn_length,
+          use_lstm=use_lstm)
 
       #Now that we have all the pieces for the output from the decoder, we have one final parameter to train,
       # namely, the weight and bias vector that will be used to transform the dimensionality of our output
