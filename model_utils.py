@@ -338,7 +338,7 @@ def encoder_decoder_attention(encoder_inputs,
     attention_states = encoder.reshape_encoder_outputs_for_attention(final_top_encoder_outputs,
                                                                     dtype=dtype)
 
-    print("Attention Mechanism Shape is " + str(attention_states.get_shape()))
+    #print("Attention Mechanism Shape is %s" % attention_states.get_shape())
 
     #then we run the decoder.
     return attention_decoder.embedding_attention_decoder(

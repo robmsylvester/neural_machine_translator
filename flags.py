@@ -11,12 +11,8 @@ import sys
 
 
 #==========================Basic Execution Options======================================
-tf.app.flags.DEFINE_boolean("decode", False,
+tf.app.flags.DEFINE_boolean("decode", True,
                             "Set to True for interactive decoding.")
-
-tf.app.flags.DEFINE_boolean("self_test", False,
-                            "Run a self-test if this is set to True. Overrides decode flag")
-
 
 
 #=================================Learning Rate==============================================
@@ -72,7 +68,7 @@ tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300, #change me to 300
 tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
                             "If True, loads training set into memory. Otherwise, reads batches by opening files and reading appropriate lines.")
 
-tf.app.flags.DEFINE_integer("max_train_data_size", 100000,
+tf.app.flags.DEFINE_integer("max_train_data_size", 9000000,
                             "Limit on the size of training data (0: no limit).")
 
 tf.app.flags.DEFINE_integer("train_offset", 0,

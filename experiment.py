@@ -6,9 +6,7 @@ def main(_):
 
   flags.flag_test()
 
-  if tf.app.flags.FLAGS.self_test:
-    translate.self_test()
-  elif tf.app.flags.FLAGS.decode:
+  if tf.app.flags.FLAGS.decode:
     translate.decode()
   else:
     translate.train()
