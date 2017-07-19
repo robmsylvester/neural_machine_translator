@@ -180,3 +180,6 @@ tf.app.flags.DEFINE_string("encoder_rnn_api", "static",
 # Alternatively, do absolutely all that we can right here with the flag testing and try to remove them from the model.
 def flag_test():
     f = tf.app.flags.FLAGS
+
+    #check decode
+    assert isinstance(f.decode, (bool)), "Decode flag must be a boolean"
