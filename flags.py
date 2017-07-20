@@ -23,7 +23,7 @@ tf.app.flags.DEFINE_integer("loss_increases_per_decay", 3,
 tf.app.flags.DEFINE_float("learning_rate", 0.5, "Learning rate.")
 
 tf.app.flags.DEFINE_float("learning_rate_decay_factor", 0.99,
-                          "Learning rate decays by this much.")
+                          "Learning rate decays by this much upon seeing loss_increases_per_decay consecutive higher average perplexities over the last steps_per_checkpoint training iterations")
 
 tf.app.flags.DEFINE_float("minimum_learning_rate", 0.005, "Minimum learning rate")
 
@@ -44,16 +44,9 @@ tf.app.flags.DEFINE_integer("to_vocab_size", 40000, "Target language vocabulary 
 
 tf.app.flags.DEFINE_string("data_dir", "/home/rob/WMT", "Directory where we will store the data as well as model checkpoint")
 
-tf.app.flags.DEFINE_string("from_train_data", None, "Training data.")
-
-tf.app.flags.DEFINE_string("to_train_data", None, "Training data.")
-
-tf.app.flags.DEFINE_string("from_dev_data", None, "Validation data.")
-
-tf.app.flags.DEFINE_string("to_dev_data", None, "Validation data.")
 
 
-#Checkpoint Flags
+#===================================Checkpoint Flags====================================
 tf.app.flags.DEFINE_string("checkpoint_name", "translate.ckpt", "Name of the Tensorflow checkpoint file")
 
 tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300, #change me to 300
@@ -177,9 +170,27 @@ tf.app.flags.DEFINE_string("encoder_rnn_api", "static",
                             "must be static or dynamic. if static, uses tensorflow static rnn calls and PAD symbols. if dynamic, uses tensorflow dynamic rnn calls and sequence lengths.")
 
 #TODO - Flesh this out when flags by migrating a few of the tests over from the other code that are common mistakes.
-# Alternatively, do absolutely all that we can right here with the flag testing and try to remove them from the model.
+# Alternatively, do absolutely all that we can right here with the flag testing and try to remove a few more of them from the model.
 def flag_test():
+
+    def validate_learning_rate_flags(flags):
+        assert flags.learning_rate > 0. and flags.learning_rate <= 1., "Your initial learning rate must be in the range (0,1]"
+        assert flags.learning_rate_decay_factor > 0. and flags.learning_rate_decay_factor <= 1., "Your learning rate decay must be in the range (0,1]"
+        assert flags.minimum_learning_rate > 0. and flags.minimum_learning_rate <=1., "Your minimum learning rate must be in the range (0,1]"
+
+    def validate_gradient_flags(flags):
+        assert flags.max_clipped_gradient > 0., "The max clipped gradient norm must be a positive real number"
+
+    def validate_file_locations(flags):
+        assert os.path.isdir(flags.data_dir), "%s is not a directory in this filesystem." % flags.data_dir
+        assert flags.checkpoint_name.endswith(".ckpt"), "The checkpoint file name %s needs to ends with '.ckpt' " % flags.checkpoint_name
+        assert os.path.isfile(os.path.join(os.getcwd(), flags.encoder_decoder_architecture_json)), "%s is not a directory in this filesystem." % os.path.join(flags.data_dir, flags.encoder_decoder_architecture_json)
+
+
     f = tf.app.flags.FLAGS
 
-    #check decode
-    assert isinstance(f.decode, (bool)), "Decode flag must be a boolean"
+    validate_learning_rate_flags(f)
+    validate_gradient_flags(f)
+    validate_file_locations(f)
+
+    print("Flag inputs are valid.")
