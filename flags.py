@@ -186,11 +186,20 @@ def flag_test():
         assert flags.checkpoint_name.endswith(".ckpt"), "The checkpoint file name %s needs to ends with '.ckpt' " % flags.checkpoint_name
         assert os.path.isfile(os.path.join(os.getcwd(), flags.encoder_decoder_architecture_json)), "%s is not a directory in this filesystem." % os.path.join(flags.data_dir, flags.encoder_decoder_architecture_json)
 
+    def validate_encoder_api(flags):
+        permitted = ['static', 'dynamic']
+        assert flags.encoder_rnn_api in permitted, "Encoder api %s is invalid" % flags.encoder_rnn_api
+
+    def validate_decoder_state_initializer(flags):
+        permitted = ['nematus', 'mirror', 'top_layer_mirror', 'bahdanu']
+        assert flags.decoder_state_initializer in permitted, "Decoder state initializer %s is invalid" % flags.decoder_state_initializer
 
     f = tf.app.flags.FLAGS
 
     validate_learning_rate_flags(f)
     validate_gradient_flags(f)
     validate_file_locations(f)
+    validate_encoder_api(f)
+    validate_decoder_state_initializer(f)
 
     print("Flag inputs are valid.")
