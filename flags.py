@@ -194,6 +194,13 @@ def flag_test():
         permitted = ['nematus', 'mirror', 'top_layer_mirror', 'bahdanu']
         assert flags.decoder_state_initializer in permitted, "Decoder state initializer %s is invalid" % flags.decoder_state_initializer
 
+    def validate_softmax_sample_size(flags):
+        assert flags.sampled_softmax_size <= flags.to_vocab_size, "Sampled softmax must not use more labels than there are target vocabulary words."
+
+    def validate_embedding_algorithm(flags):
+        permitted = ['network', 'glove']
+        assert flags.embedding_algorithm in permitted, "Embedding algorithm %s is not supported" % flags.embedding_algorithm
+
     f = tf.app.flags.FLAGS
 
     validate_learning_rate_flags(f)
@@ -201,5 +208,8 @@ def flag_test():
     validate_file_locations(f)
     validate_encoder_api(f)
     validate_decoder_state_initializer(f)
+    validate_softmax_sample_size(f)
+    validate_embedding_algorithm(f)
+
 
     print("Flag inputs are valid.")
