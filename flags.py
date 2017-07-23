@@ -119,12 +119,14 @@ tf.app.flags.DEFINE_integer("num_attention_heads", 1,
 tf.app.flags.DEFINE_integer("sampled_softmax_size", 512, #64 would be good, 128 is better.
                             "Sampled Softmax will use this many logits out of the vocab size for the probability estimate of the true word")
 
+
 #TODO - decoder vocab boosting is currently not implemented.
 tf.app.flags.DEFINE_boolean("decoder_vocab_boosting", False,
                             "adaboost decoder prediction weights in the loss function based on perplexities of sentences that contain that word")
 
+
 tf.app.flags.DEFINE_integer("vocab_boost_occurrence_memory", 100,
-                            "When calculating the perpelxity of sentences that contain a certain word, only count that last (this many) sentences with that word")
+                            "When calculating the perpelxity of sentences that contain a certain word, only count the last (this many) sentences with that word")
 
 
 
@@ -201,6 +203,9 @@ def flag_test():
         permitted = ['network', 'glove']
         assert flags.embedding_algorithm in permitted, "Embedding algorithm %s is not supported" % flags.embedding_algorithm
 
+        if flags.embedding_algorithm == 'glove':
+            assert os.path.isfile(os.path.join(os.getcwd(), flags.glove_encoder_embedding_file)), "Glove embedding file %s does not exist in the file system" % os.path.join(os.getcwd(), flags.glove_encoder_embedding_file)
+            assert os.path.isfile(os.path.join(os.getcwd(), flags.glove_decoder_embedding_file)), "Glove embedding file %s does not exist in the file system" % os.path.join(os.getcwd(), flags.glove_decoder_embedding_file)
     f = tf.app.flags.FLAGS
 
     validate_learning_rate_flags(f)
