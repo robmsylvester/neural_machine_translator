@@ -13,6 +13,12 @@ class GRUCell(RNNCell):
 	http://arxiv.org/abs/1406.1078
 
 	Args:
+	num_units - integer, the hidden size of the GRU
+	init_reset_update_bias - the initial bias of the gru reset update gates. 1.0 means no reset, no update
+	_init_candidate_bias - the bias applied to the linear transformation fully connected layer calculation of inputs dot reset*state
+	initializer - the initialization function for the weights of the gru. defaults to xavier
+	activation - tensorflow activation function. NOT the activation for the reset and update gates, which are always sigmoid
+
 	Returns:
 	 A tuple of new_hidden_state, new_hidden_state
 	"""
