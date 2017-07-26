@@ -114,15 +114,7 @@ def initialize_decoder_states_from_final_encoder_states(final_encoder_states, de
     return final_encoder_states #the encoder states will be used 1-for-1 in the decoder architecture because it's exactly the same
 
   elif decoder_state_initializer == "top_layer_mirror":
-
-    if len(final_encoder_states[-1]) == 2:
-      if use_lstm: #we will return a list of lists of LSTM State Tuples
-        combined_lstm_tuple = _concatenate_bidirectional_lstm_state_tuples(final_encoder_states[-1][0], final_encoder_states[-1][1])    
-        return [ [combined_lstm_tuple] for _ in xrange(decoder_architecture['num_layers'])]
-      else: #we will return a concatenated gru tensor from both time steps
-        combined_gru_tensor = tf.concat([final_encoder_states[-1][0], final_encoder_states[-1][1] ], axis=1 )
-    else:
-      return [final_encoder_states[-1] for _ in xrange(decoder_architecture['num_layers'])] #a list of lists of LSTM State Tuples, or a list of lists of GRU Tensors
+    return [final_encoder_states[-1] for _ in xrange(decoder_architecture['num_layers'])] #a list of lists of LSTM State Tuples, or a list of lists of GRU Tensors
   
   elif decoder_state_initializer == "nematus":
     raise NotImplementedError, "Nematus intializer is not implemented. To do this. All encoder states need to be tracked or averaged in the encoder pass"
@@ -308,8 +300,9 @@ def one_step_decoder(decoder_json, attn_input, input_lengths, hidden_states_stac
         #this will give us the outputs, and we can combine them as necessary
         #c stands for cell, out for outputs, f for forward, b for backward
         if layer_parameters['bidirectional']:
+          print(hidden_states_stack[current_layer])
           assert isinstance(hidden_states_stack[current_layer], (list)), "Current layers hidden states stack must be a list because it is bidirectional"
-          assert len(hidden_states_stack[current_layer]) == 2, "Expected current layer to have two initial hidden states, but instead have %d" % len(hidden_states_stack)
+          assert len(hidden_states_stack[current_layer]) == 2, "Expected current layer %s to have two initial hidden states, but instead have %d" % (current_layer,len(hidden_states_stack[current_layer]))
           cf = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
           cb = model_utils._create_rnn_cell(layer_parameters, use_lstm=use_lstm)
           out_f, out_b, state_f, state_b = core_rnn.static_bidirectional_rnn(cf,
@@ -640,6 +633,8 @@ def attention_decoder(decoder_architecture,
       # (other than the whole-attention-mechanism thing) is that this decoder call runs for ONE time step
       #decoder output is a list with a single tensor. eventually this list could be removed
       #decoder hidden states is a list of lists of tensors
+
+
       decoder_output, decoder_hidden_states = one_step_decoder(decoder_architecture,
                                                               attentive_network_input,
                                                               decoder_input_lengths,

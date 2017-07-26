@@ -191,9 +191,27 @@ def _verify_recurrent_stack_architecture(stack_json, top_bidirectional_layer_all
   #we made it! party on wayne!
   return True
 
-#TODO - write this when nematus is written
 def _verify_decoder_state_initializer(stack_json, decoder_state_initializer):
+  if decoder_state_initializer=="nematus":
+    print("Nematus decoder state initializer is not yet supported")
+    return False
+  elif decoder_state_initializer=="top_layer_mirror":
+    last_layer_name = next(reversed(stack_json['encoder']['layers']))
+    last_layer_parameters = stack_json['encoder']['layers'][last_layer_name]
+    
+    state_size = last_layer_parameters['hidden_size']
+    state_bidirectional = last_layer_parameters['bidirectional']
+    
+    for l_name, l_params in stack_json['decoder']['layers'].iteritems():
+      if l_params['bidirectional'] != state_bidirectional:
+        print("If using top layer mirror, every decoder layer must have the same value for the bidirectional property as the top layer in the encoder. Layer %s reads %s, top encoder layer reads %s" %(l_name, str(l_params['bidirectional']), str(state_bidirectional)))
+        return False
+      elif state_size != l_params['hidden_size']:
+        print("If using top layer mirror, every decoder layer must have the same value for the hidden size property as the top layer in the encoder. Layer %s reads %d, top encoder layer reads %d" %(l_name, l_params['hidden_size'], state_size))
+        return False
+
   return True
+
 
 #TODO - not much to do here other than verify dimensionality expansion with the variable number of attention heads is working properly
 def _verify_attention_architecture(stack_json):

@@ -11,7 +11,7 @@ import sys
 
 
 #==========================Basic Execution Options======================================
-tf.app.flags.DEFINE_boolean("decode", True,
+tf.app.flags.DEFINE_boolean("decode", False,
                             "Set to True for interactive decoding.")
 
 
@@ -61,7 +61,7 @@ tf.app.flags.DEFINE_integer("steps_per_checkpoint", 300, #change me to 300
 tf.app.flags.DEFINE_boolean("load_train_set_in_memory", True,
                             "If True, loads training set into memory. Otherwise, reads batches by opening files and reading appropriate lines.")
 
-tf.app.flags.DEFINE_integer("max_train_data_size", 9000000,
+tf.app.flags.DEFINE_integer("max_train_data_size", 200000,
                             "Limit on the size of training data (0: no limit).")
 
 tf.app.flags.DEFINE_integer("train_offset", 0,
@@ -215,6 +215,4 @@ def flag_test():
     validate_decoder_state_initializer(f)
     validate_softmax_sample_size(f)
     validate_embedding_algorithm(f)
-
-
     print("Flag inputs are valid.")
