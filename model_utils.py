@@ -11,10 +11,7 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import variable_scope
-
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl
-import encoder
-import attention_decoder
 import json
 from collections import OrderedDict
 
@@ -302,81 +299,6 @@ def _combine_residual_inputs(inputs_as_list, merge_mode, return_list=True):
 
 
 
-def encoder_decoder_attention(encoder_inputs,
-                                decoder_inputs,
-                                encoder_input_lengths,
-                                decoder_input_lengths,
-                                encoder_architecture,
-                                decoder_architecture,
-                                decoder_state_initializer,
-                                num_encoder_symbols,
-                                num_decoder_symbols,
-                                embedding_size,
-                                embedding_algorithm="network", #network means random initialization, train via backprop. otherwise use fastext, word2vec or glove
-                                train_embeddings=True, #if true and not network for embedding algorithm, will use unsupervised algorithm for initialization and train via backprop, which dominates anyway
-                                num_heads=1, #attention heads to read. 
-                                output_projection=None,
-                                feed_previous=False,
-                                dtype=None,
-                                scope=None,
-                                initial_state_attention=False):
-
-  #The first thing the model does is add an embedding to the encoder_inputs
-  with variable_scope.variable_scope(scope or "model", dtype=dtype) as scope:
-    dtype=scope.dtype
-
-    #TODO - this is probably where the embedded decoder inputs should be extracted
-
-    #encoder outputs are a list of length max_encoder_output of tensors with the shape of the top layer
-    if FLAGS.encoder_rnn_api == "dynamic":
-      final_top_encoder_outputs, final_encoder_states = encoder.dynamic_embedding_encoder(encoder_architecture,
-                                                                                      encoder_inputs,
-                                                                                      encoder_input_lengths,
-                                                                                      num_encoder_symbols,
-                                                                                      embedding_size,
-                                                                                      embedding_algorithm=embedding_algorithm,
-                                                                                      train_embeddings=train_embeddings,
-                                                                                      dtype=dtype)
-    elif FLAGS.encoder_rnn_api == "static":
-      final_top_encoder_outputs, final_encoder_states = encoder.static_embedding_encoder(encoder_architecture,
-                                                                                          encoder_inputs,
-                                                                                          encoder_input_lengths,
-                                                                                          num_encoder_symbols,
-                                                                                          embedding_size,
-                                                                                          embedding_algorithm=embedding_algorithm,
-                                                                                          train_embeddings=train_embeddings,
-                                                                                          dtype=dtype)
-    else:
-      raise ValueError, "encoder rnn api must be dynamic or static. eventually move this to flags check function"
-
-    #Then we create an attention state by reshaping the encoder outputs. This amounts to creating an additional
-    #dimension, namely attention_length, so that our attention states are of shape [batch_size, atten_len=1, attention_size=size of last lstm output]
-    #these attention states are used in every calculation of attention during the decoding process
-    #we will use the STATE output from the decoder network as a query into the attention mechanism.
-    attention_states = encoder.reshape_encoder_outputs_for_attention(final_top_encoder_outputs,
-                                                                    dtype=dtype)
-
-    #print("Attention Mechanism Shape is %s" % attention_states.get_shape())
-
-    #then we run the decoder.
-    return attention_decoder.embedding_attention_decoder(
-          decoder_architecture,
-          decoder_state_initializer,
-          decoder_inputs,
-          decoder_input_lengths,
-          final_encoder_states, #this is a list of lists of LSTMStateTuples or GRU States
-          attention_states,
-          num_decoder_symbols,
-          embedding_size,
-          embedding_algorithm=embedding_algorithm,
-          train_embeddings=train_embeddings,
-          num_heads=num_heads,
-          output_size=None,
-          output_projection=output_projection,
-          feed_previous=feed_previous,
-          initial_state_attention=initial_state_attention)
-
-
 def sequence_loss_by_example(logits,
                              targets,
                              weights,
@@ -488,78 +410,3 @@ def sequence_loss(logits,
       return cost / math_ops.cast(batch_size, cost.dtype)
     else:
       return cost
-
-
-
-#TODO - rewrite the args to this
-def run_eda_architecture(encoder_inputs,
-                       decoder_inputs,
-                       max_encoder_length,
-                       max_decoder_length,
-                       encoder_input_lengths,
-                       decoder_input_lengths,
-                       targets,
-                       weights,
-                       seq2seq,
-                       softmax_loss_function=None,
-                       per_example_loss=False,
-                       name=None):
-  """Create a sequence-to-sequence model
-
-  Args:
-    encoder_inputs: A list of Tensors to feed the encoder; first seq2seq input.
-    decoder_inputs: A list of Tensors to feed the decoder; second seq2seq input.
-    max_encoder_length: An int, truncate encoder inputs past this number
-    max_decoder_length: An int, truncate decoder inputs past this number
-    targets: A list of 1D batch-sized int32 Tensors (desired output sequence).
-    weights: List of 1D batch-sized float-Tensors to weight the targets.
-    seq2seq: A sequence-to-sequence model function; it takes 4 input that
-      agree with encoder_inputs and decoder_inputs, and encoder_input_lengths
-      and decoder_input_lengths.
-      returns consist of outputs and states (as, e.g., basic_rnn_seq2seq).
-    softmax_loss_function: Function (inputs-batch, labels-batch) -> loss-batch
-      to be used instead of the standard softmax (the default if this is None).
-    per_example_loss: Boolean. If set, the returned loss will be a batch-sized
-      tensor of losses for each sequence in the batch. If unset, it will be
-      a scalar with the averaged loss from all examples.
-    name: Optional name for this operation, defaults to "model_without_buckets".
-
-  Returns:
-    A tuple of the form (outputs, losses), where:
-      outputs: The outputs for each bucket. Its j'th element consists of a list
-        of 2D Tensors. The shape of output tensors can be either
-        [batch_size x output_size] or [batch_size x num_decoder_symbols]
-        depending on the seq2seq model used.
-      losses: List of scalar Tensors, representing losses for each bucket, or,
-        if per_example_loss is set, a list of 1D batch-sized float Tensors.
-  """
-  all_inputs = encoder_inputs + decoder_inputs + targets + weights
-
-  with ops.name_scope(name, "model_without_buckets", all_inputs):
-    #with variable_scope.variable_scope(
-    #    variable_scope.get_variable_scope(), reuse=True if j > 0 else None):
-    with variable_scope.variable_scope(variable_scope.get_variable_scope()):
-
-      assert len(encoder_inputs) == max_encoder_length
-      assert len(decoder_inputs) == max_decoder_length+1
-
-      outputs, _ = seq2seq(encoder_inputs[:max_encoder_length],
-                           decoder_inputs[:max_decoder_length], #TODO check not off by one here
-                           encoder_input_lengths,
-                           decoder_input_lengths)
-
-      if per_example_loss:
-        losses = sequence_loss_by_example(
-                  outputs,
-                  targets[:max_decoder_length],
-                  weights[:max_decoder_length],
-                  softmax_loss_function=softmax_loss_function)
-      else:
-
-        losses = sequence_loss(
-                outputs,
-                targets[:max_decoder_length],
-                weights[:max_decoder_length],
-                softmax_loss_function=softmax_loss_function)
-
-  return outputs, losses

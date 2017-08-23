@@ -8,7 +8,15 @@ import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 import model_utils
+import encoder
+import attention_decoder
 import vocabulary_utils
+
+from tensorflow.python.framework import ops
+from tensorflow.python.ops import array_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import nn_ops
+from tensorflow.python.ops import variable_scope
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -20,6 +28,9 @@ class seq2seqEDA(object):
     for arbitrary geometries for encoder and decoder lstm/gru stacks via a json
     file defining connections. In addition, a sampled softmax allows for really
     large vocabularies.
+
+    There are many options for the encoder and the decoder, so you'll want to check
+    out those files.
 
     For more info:
     http://arxiv.org/abs/1412.7449
@@ -41,7 +52,11 @@ class seq2seqEDA(object):
                softmax_sample_size=512,
                forward_only=False,
                dtype=tf.float32):
-    """Create the model that can be called by the runner
+    """Create the model that can be called by the runner.
+
+    In this init function, we define everything that tensorflow is going to need to use in any possible sessions.
+    That's the point of init, really. We can then pass the details off to the encoder, decoder, attention, beam searches,
+    whatever we want to do.
 
     Args:
       source_vocab_size: size of the source vocabulary, usually defined by a flag.
@@ -87,8 +102,7 @@ class seq2seqEDA(object):
 
     # If we use sampled softmax, we need an output projection.
     output_projection = None
-    softmax_loss_function = None
-
+    self.softmax_loss_function = None
 
     # Sampled softmax only makes sense if we sample less than vocabulary size.
     if softmax_sample_size > 0 and softmax_sample_size < self.target_vocab_size:
@@ -122,30 +136,7 @@ class seq2seqEDA(object):
                 dtype)
 
       #Assign the previously declared function to be our loss function
-      softmax_loss_function = sampled_loss
-
-
-    # The seq2seq function: we use embedding for the input and attention.
-    def sequence_to_sequence_function(encoder_inputs, decoder_inputs, encoder_input_lengths, decoder_input_lengths, do_decode):
-      return model_utils.encoder_decoder_attention(
-          encoder_inputs,
-          decoder_inputs,
-          encoder_input_lengths,
-          decoder_input_lengths,
-          self.encoder_architecture,
-          self.decoder_architecture,
-          decoder_state_initializer=FLAGS.decoder_state_initializer,
-          num_encoder_symbols=source_vocab_size,
-          num_decoder_symbols=target_vocab_size,
-          embedding_algorithm=FLAGS.embedding_algorithm,
-          num_heads=FLAGS.num_attention_heads,
-          embedding_size=FLAGS.encoder_embedding_size,
-          train_embeddings=FLAGS.train_embeddings or FLAGS.embedding_algorithm == 'network', #TODO, obviously fix this
-          output_projection=output_projection,
-          feed_previous=do_decode,
-          dtype=dtype)
-
-
+      self.softmax_loss_function = sampled_loss
 
     # Feeds for inputs are lists of integers representing words
     self.encoder_inputs, self.decoder_inputs,\
@@ -156,7 +147,7 @@ class seq2seqEDA(object):
                                             shape=[target_vocab_size, FLAGS.vocab_boost_occurrence_memory],
                                             name="vocab_perplexities")
 
-    self.target_weight_boosting_op = self.boost_decoder_weights(self.target_weights, self.vocab_perplexities)
+    #self.target_weight_boosting_op = self.boost_decoder_weights(self.target_weights, self.vocab_perplexities)
 
     #We need to offset the _GO symbol addition by shifting our targets by one index to the right.
     targets = [self.decoder_inputs[i + 1]
@@ -164,36 +155,15 @@ class seq2seqEDA(object):
 
 
     # Training outputs and losses.
-    if forward_only:
-      self.outputs, self.losses = model_utils.run_eda_architecture(
-                                                self.encoder_inputs,
-                                                self.decoder_inputs,
-                                                self.max_encoder_length,
-                                                self.max_decoder_length,
-                                                self.encoder_input_lengths,
-                                                self.decoder_input_lengths,
-                                                targets,
-                                                self.target_weights,
-                                                lambda x, y, x_l, y_l : sequence_to_sequence_function(x, y, x_l, y_l, True),
-                                                softmax_loss_function=softmax_loss_function)
+    self.outputs, self.losses = self.run_eda_architecture(targets,
+                                                        self.target_weights,
+                                                        feed_previous=forward_only,
+                                                        output_projection=output_projection)
 
-      # If we use output projection, we need to project outputs for decoding.
-      if output_projection is not None:
-        self.outputs = [tf.matmul(output, weights) + biases for output in self.outputs]
-
-
-    else:
-      self.outputs, self.losses = model_utils.run_eda_architecture(
-                                                self.encoder_inputs,
-                                                self.decoder_inputs,
-                                                self.max_encoder_length,
-                                                self.max_decoder_length,
-                                                self.encoder_input_lengths,
-                                                self.decoder_input_lengths,
-                                                targets,
-                                                self.target_weights,
-                                                lambda x, y, x_l, y_l : sequence_to_sequence_function(x, y, x_l, y_l, False), #we will pass in the arguments ourselves in the model_without_buckets function
-                                                softmax_loss_function=softmax_loss_function)
+    # If we are only doing a forward pass, we need to do our output projection here.
+    # No need to wrap this in a tf.cond, the program will be called with these values defined and constant.
+    if forward_only and output_projection is not None:
+      self.outputs = [tf.matmul(output, weights) + biases for output in self.outputs]
 
     # Gradients and SGD update operation for training the model.
     params = tf.trainable_variables()
@@ -220,6 +190,140 @@ class seq2seqEDA(object):
     #Save everything so we can reload after the power goes out because kitty unplugs the computer looking for his stupid mouse toy.
     self.saver = tf.train.Saver(tf.global_variables())
 
+
+  #For the below functions, remember that the encoder and decoder inputs change on each training step, or during a live decoding
+  #session. That's why we don't use self.encoder_inputs, but pass them directly as arguments and assign them to the .name property
+  #of the placeholder. Then, we dynamically can adjust the lengths of these inputs as a separate argument.
+  def encoder_decoder_attention(self,
+                                encoder_inputs,
+                                decoder_inputs,
+                                encoder_input_lengths,
+                                decoder_input_lengths,
+                                decoder_state_initializer,
+                                embedding_size,
+                                embedding_algorithm="network", #network means random initialization, train via backprop. otherwise use fastext, word2vec or glove
+                                train_embeddings=True, #if true and not network for embedding algorithm, will use unsupervised algorithm for initialization and train via backprop, which dominates anyway
+                                num_heads=1, #attention heads to read. 
+                                output_projection=None,
+                                feed_previous=False,
+                                dtype=None,
+                                scope=None,
+                                initial_state_attention=False):
+
+    #The first thing the model does is add an embedding to the encoder_inputs
+    with variable_scope.variable_scope(scope or "model", dtype=dtype) as scope:
+      dtype=scope.dtype
+
+      #TODO - this is probably where the embedded decoder inputs should be extracted
+
+      #encoder outputs are a list of length max_encoder_output of tensors with the shape of the top layer
+      if FLAGS.encoder_rnn_api == "dynamic":
+        final_top_encoder_outputs, final_encoder_states = encoder.dynamic_embedding_encoder(self.encoder_architecture,
+                                                                                        encoder_inputs,
+                                                                                        encoder_input_lengths,
+                                                                                        self.source_vocab_size,
+                                                                                        embedding_size,
+                                                                                        embedding_algorithm=embedding_algorithm,
+                                                                                        train_embeddings=train_embeddings,
+                                                                                        dtype=dtype)
+      elif FLAGS.encoder_rnn_api == "static":
+        final_top_encoder_outputs, final_encoder_states = encoder.static_embedding_encoder(self.encoder_architecture,
+                                                                                            encoder_inputs,
+                                                                                            encoder_input_lengths,
+                                                                                            self.source_vocab_size,
+                                                                                            embedding_size,
+                                                                                            embedding_algorithm=embedding_algorithm,
+                                                                                            train_embeddings=train_embeddings,
+                                                                                            dtype=dtype)
+      else:
+        raise ValueError, "encoder rnn api must be dynamic or static. eventually move this to flags check function"
+
+      #Then we create an attention state by reshaping the encoder outputs. This amounts to creating an additional
+      #dimension, namely attention_length, so that our attention states are of shape [batch_size, atten_len=1, attention_size=size of last lstm output]
+      #these attention states are used in every calculation of attention during the decoding process
+      #we will use the STATE output from the decoder network as a query into the attention mechanism.
+      attention_states = encoder.reshape_encoder_outputs_for_attention(final_top_encoder_outputs,
+                                                                      dtype=dtype)
+
+      #then we run the decoder.
+      return attention_decoder.embedding_attention_decoder(
+            self.decoder_architecture,
+            decoder_state_initializer,
+            decoder_inputs,
+            decoder_input_lengths,
+            final_encoder_states, #this is a list of lists of LSTMStateTuples or GRU States
+            attention_states,
+            self.target_vocab_size,
+            embedding_size,
+            embedding_algorithm=embedding_algorithm,
+            train_embeddings=train_embeddings,
+            num_heads=num_heads,
+            output_size=None,
+            output_projection=output_projection,
+            feed_previous=feed_previous,
+            initial_state_attention=initial_state_attention)
+
+
+  def run_eda_architecture(self,
+                           targets,
+                           target_weights,
+                           feed_previous=False,
+                           output_projection=None,
+                           name=None):
+    """Create a sequence-to-sequence model using all the data we've initialized in __init__
+
+    Args:
+
+      #TODO - remove these four
+        encoder_inputs: A list of Tensors to feed the encoder; first seq2seq input.
+        decoder_inputs: A list of Tensors to feed the decoder; second seq2seq input
+        encoder_input_lengths: The length of each sequence in the encoder and decoder
+        targets: A list of 1D batch-sized int32 Tensors (desired output sequence).
+
+      target_weights: List of 1D batch-sized float-Tensors to weight the targets, weighting is naively
+      done at 1 for non-padded outputs, and 0 for padded ones. Dynamic weighting is something
+      that requires some research. Boosting is a possibility.
+
+      name: Optional name for this operation, defaults to "eda_architecture".
+
+    Returns:
+      A tuple of the form (outputs, losses), where:
+        outputs: The outputs for each bucket. Its j'th element consists of a list
+          of 2D Tensors. The shape of output tensors can be either
+          [batch_size x output_size] or [batch_size x num_decoder_symbols]
+          depending on the seq2seq model used.
+        losses: List of scalar Tensors, representing average loss.
+    """
+    all_inputs = self.encoder_inputs + self.decoder_inputs + targets + self.target_weights
+
+    with ops.name_scope(name, "eda_architecture", all_inputs):
+
+      with variable_scope.variable_scope(variable_scope.get_variable_scope()):
+
+        assert len(self.encoder_inputs) == self.max_encoder_length
+        assert len(self.decoder_inputs) == self.max_decoder_length+1
+
+        #TODO - remove these flags, attach them as args to class
+        outputs, _ = self.encoder_decoder_attention(self.encoder_inputs[:self.max_encoder_length],
+                                                    self.decoder_inputs[:self.max_decoder_length],
+                                                    self.encoder_input_lengths,
+                                                    self.decoder_input_lengths,
+                                                    decoder_state_initializer=FLAGS.decoder_state_initializer,
+                                                    embedding_algorithm=FLAGS.embedding_algorithm,
+                                                    num_heads=FLAGS.num_attention_heads,
+                                                    embedding_size=FLAGS.encoder_embedding_size,
+                                                    train_embeddings=FLAGS.train_embeddings or FLAGS.embedding_algorithm == 'network', #TODO, obviously fix this
+                                                    output_projection=output_projection,
+                                                    feed_previous=feed_previous,
+                                                    dtype=self.dtype)
+        losses = model_utils.sequence_loss(
+                outputs,
+                targets[:self.max_decoder_length],
+                target_weights[:self.max_decoder_length],
+                softmax_loss_function=self.softmax_loss_function)
+
+    return outputs, losses
+
   def step(self,
           session,
           encoder_inputs,
@@ -230,8 +334,8 @@ class seq2seqEDA(object):
           forward_only=False):
     """Run a step of the model with the encoder and decoder inputs passed from either
       A. The training minibatch
-      B. The validation set in its entirety
-      C. A single example while actively decoding, in which case there is just one sentence in the "batch"
+      B. The validation set
+      C. A single example while actively decoding, in which case there is just one sentence in the batch
 
     Args:
       session: tensorflow session to use.
@@ -362,11 +466,18 @@ class seq2seqEDA(object):
 
     return encoder_inputs, decoder_inputs, encoder_input_lengths, decoder_input_lengths, target_weights
 
-  #TODO - write this, and write this within the attention decoder at teach step
+
+
+
+  #TODO - write this, and write this within the attention decoder at validation step
   def boost_decoder_weights(self, weights, perplexity_matrix):
-    weights = weights
-    perplexity_matrix=perplexity_matrix
-    #Yeah, this function does nothing
+    #weights = weights
+    #perplexity_matrix=perplexity_matrix
+    #Yeah, this function does nothing for now
+    pass
+
+
+
 
 
 
